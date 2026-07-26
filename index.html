@@ -2650,7 +2650,7 @@ async function startRazorpaySubscription(planKey){
 
   showToast('Setting up your subscription…');
   try{
-    const res = await fetch(`${window.FINGERTAX_FUNCTIONS_BASE}/createSubscription`, {
+    const res = await fetch(`${window.FINGERTAX_FUNCTIONS_BASE}/create-subscription`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({gstin: profile.gstin, plan: planKey, name: profile.name, email: profile.email||''})
