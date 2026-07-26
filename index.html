@@ -2655,9 +2655,12 @@ async function startRazorpaySubscription(planKey){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({gstin: profile.gstin, plan: planKey, name: profile.name, email: profile.email||''})
     });
-    if(!res.ok) throw new Error('Server returned '+res.status);
-    const data = await res.json();
-    if(!data.subscriptionId || !data.keyId) throw new Error('Missing subscription details from server response');
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      console.error('create-subscription server error (status '+res.status+'):', data);
+      throw new Error(data.error ? (data.error + (data.detail ? ' — '+JSON.stringify(data.detail) : '')) : ('Server returned '+res.status));
+    }
+    if(!data.subscriptionId || !data.keyId) throw new Error('Missing subscription details from server response: '+JSON.stringify(data));
 
     const rzp = new Razorpay({
       key: data.keyId,
@@ -2676,7 +2679,7 @@ async function startRazorpaySubscription(planKey){
     rzp.open();
   }catch(e){
     console.error('Razorpay subscription setup failed:', e);
-    showToast('Could not start subscription setup — is the billing backend deployed yet? ('+e.message+')');
+    showToast('Could not start subscription setup — check the browser console (F12) for the exact error. ('+e.message+')');
   }
 }
 
