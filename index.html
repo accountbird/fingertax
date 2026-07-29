@@ -1930,6 +1930,13 @@
         <p class="note" style="margin-top:0;">Choose the default look for invoices you issue. You can still override this per invoice when creating a sales voucher.</p>
         <select id="defaultThemeSelect" style="width:100%;" onchange="saveDefaultTheme()"></select>
       </div>
+
+      <h2 class="section" style="color:var(--oxblood);">⚠ Danger zone<div class="rule"></div></h2>
+      <div class="card" style="max-width:640px;border:1px solid var(--oxblood);">
+        <p class="note" style="margin-top:0;">FingerTax ships with a few sample invoices so you can see how the ledger looks before you enter real data. Once you're ready to start using it for real, reset to wipe those (and anything else you've entered) — this permanently erases <b>all</b> sales invoices, credit notes, revenue/receivable entries and customer advance balances, and every report rebuilds from a clean slate. Your business profile, bank details and invoice numbering settings are kept as-is.</p>
+        <button class="btn ghost sm" style="color:var(--oxblood);border-color:var(--oxblood);" onclick="resetAllData()">🗑 Reset all data</button>
+        <div class="note" id="resetAllDataNote"></div>
+      </div>
     </section>
 
   </main>
@@ -2346,6 +2353,76 @@ function closeLegalModal(){
 
 /* ================= STATE ================= */
 let profile = null;
+
+/* ================= STORAGE ABSTRACTION =================
+   window.storage is only available inside the Claude.ai artifact preview — it does not exist on
+   the real deployed site (your own domain), which is why every save below was silently failing
+   there: window.storage.get/set doesn't exist, the calls throw, and the surrounding try/catch
+   swallows the error with no message shown to the user. That's the actual root cause of "nothing
+   is saved after re-login" in production.
+
+   AppStorage now has three tiers, tried in order:
+   1. window.storage — only present inside the Claude.ai preview, so behaviour there is unchanged.
+   2. Cloud backup — if the person is signed in with Google, every save is also pushed to Supabase
+      through the data-save/data-load Netlify Functions (see backup-setup/ for the SQL + function
+      code). Those functions verify the Firebase ID token server-side and only ever read/write the
+      row for that verified UID, so this is safe to call from the browser.
+   3. Browser localStorage — always written to first (instant, works offline and before sign-in),
+      and used as the fallback whenever the cloud isn't reachable or the person hasn't signed in
+      with Google yet (e.g. someone who only entered a name/email at signup, with no verified
+      identity to attach a cloud backup to). This is device-only, same as before. */
+const AppStorage = {
+  useNative: (typeof window !== 'undefined' && !!window.storage),
+  localKey(key){ return 'fingertax:'+key; },
+
+  async get(key){
+    if(this.useNative){
+      try{ return await window.storage.get(key, false); }catch(e){ return null; }
+    }
+    if(typeof window.fbGetIdToken === 'function'){
+      try{
+        const token = await window.fbGetIdToken();
+        if(token){
+          const res = await fetch('/.netlify/functions/data-load?key='+encodeURIComponent(key), {
+            headers: { Authorization: 'Bearer '+token }
+          });
+          if(res.ok){
+            const data = await res.json();
+            if(data && data.value!=null){
+              try{ window.localStorage.setItem(this.localKey(key), data.value); }catch(e){}
+              return {key, value:data.value, shared:false};
+            }
+          }
+        }
+      }catch(e){ /* offline, or the function isn't deployed yet — fall back to the local cache */ }
+    }
+    try{
+      const raw = window.localStorage.getItem(this.localKey(key));
+      return raw==null ? null : {key, value: raw, shared:false};
+    }catch(e){ return null; }
+  },
+
+  async set(key, value){
+    if(this.useNative){
+      try{ return await window.storage.set(key, value, false); }catch(e){ return null; }
+    }
+    // Save locally first — instant, and the only thing that has to work before sign-in or offline.
+    try{ window.localStorage.setItem(this.localKey(key), value); }catch(e){}
+    if(typeof window.fbGetIdToken === 'function'){
+      try{
+        const token = await window.fbGetIdToken();
+        if(token){
+          await fetch('/.netlify/functions/data-save', {
+            method:'POST',
+            headers: { 'Content-Type':'application/json', Authorization:'Bearer '+token },
+            body: JSON.stringify({key, value})
+          });
+        }
+      }catch(e){ /* offline — the local copy above is already safe; next successful save syncs it */ }
+    }
+    return {key, value, shared:false};
+  }
+};
 let itemIdCounter = 0;
 let fxRate = null;
 let fxTimestamp = null;
@@ -2523,7 +2600,7 @@ async function saveBankDetails(){
     ifsc: document.getElementById('bankIfsc').value.trim(),
     branch: document.getElementById('bankBranch').value.trim()
   };
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   const note = document.getElementById('bankSaveNote');
   note.textContent = 'Saved — these details will now appear on printed invoices.';
   note.style.color = 'var(--sage)';
@@ -2532,7 +2609,7 @@ async function saveBankDetails(){
 async function saveDefaultTheme(){
   if(!profile) return;
   profile.invoiceTheme = document.getElementById('defaultThemeSelect').value;
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   showToast('Default invoice theme updated to "'+INVOICE_THEMES[profile.invoiceTheme].label+'".');
 }
 
@@ -2557,7 +2634,7 @@ async function saveInvoiceNumbering(){
   profile.invoicePadding = parseInt(document.getElementById('invPadding').value)||4;
   const nextNum = parseInt(document.getElementById('invNextNumber').value);
   if(nextNum && nextNum>0) invoiceSeq = nextNum-1;
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   previewInvoiceNumber();
   const note = document.getElementById('invNumberingSaveNote');
   note.textContent = 'Saved — new sales vouchers will use this numbering.';
@@ -2603,7 +2680,7 @@ function renderMembershipCard(){
 async function setPreferredGateway(gw){
   if(!profile) return;
   profile = Object.assign({}, profile, {preferredPaymentGateway: gw});
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   updateGatewayButtons();
   showToast(`Preferred payment method set to ${gw==='stripe'?'Stripe':'PayPal'} — ready for when subscription billing goes live.`);
 }
@@ -2822,7 +2899,7 @@ let invoices = [
    persistInvoices() afterwards or the change will be lost on reload/re-login. */
 async function loadInvoices(){
   try{
-    const res = await window.storage.get('fingertax_invoices', false);
+    const res = await AppStorage.get('fingertax_invoices');
     if(res && res.value){
       const saved = JSON.parse(res.value);
       invoices = saved.items || [];
@@ -2831,7 +2908,7 @@ async function loadInvoices(){
   }catch(e){ /* nothing saved yet — keep the sample invoices above */ }
 }
 async function persistInvoices(){
-  try{ await window.storage.set('fingertax_invoices', JSON.stringify({seq: invoiceSeq, items: invoices}), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_invoices', JSON.stringify({seq: invoiceSeq, items: invoices})); }catch(e){}
 }
 
 /* ================= CREDIT NOTES ================= */
@@ -2839,7 +2916,7 @@ let creditNoteSeq = 12;
 let creditNotes = [];
 async function loadCreditNotes(){
   try{
-    const res = await window.storage.get('fingertax_creditnotes', false);
+    const res = await AppStorage.get('fingertax_creditnotes');
     if(res && res.value){
       const saved = JSON.parse(res.value);
       creditNotes = saved.items || [];
@@ -2848,7 +2925,42 @@ async function loadCreditNotes(){
   }catch(e){ /* nothing saved yet */ }
 }
 async function persistCreditNotes(){
-  try{ await window.storage.set('fingertax_creditnotes', JSON.stringify({seq: creditNoteSeq, items: creditNotes}), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_creditnotes', JSON.stringify({seq: creditNoteSeq, items: creditNotes})); }catch(e){}
+}
+
+/* ================= RESET ALL DATA (wipes sample invoices + anything the user has entered) ================= */
+async function resetAllData(){
+  if(!confirm('This permanently deletes every sales invoice, credit note, revenue/receivable entry and customer advance balance (including the sample invoices) and cannot be undone. Continue?')) return;
+  if(!confirm('Are you sure? This is your last chance to cancel — all sales data will be erased.')) return;
+
+  invoices = [];
+  creditNotes = [];
+  revenueEntries = [];
+  customerAdvances = {};
+  invoiceSeq = 0;
+  creditNoteSeq = 0;
+  revenueSeq = 0;
+  selectedIds.clear();
+  editingInvoiceId = null;
+
+  await persistInvoices();
+  await persistCreditNotes();
+  await persistRevenueEntries();
+  await persistCustomerAdvances();
+
+  renderInvoiceTable();
+  renderCreditNotesTable();
+  renderRevenue();
+  renderPartywiseReport();
+  renderSalesReport();
+  drawBestCustomerChart();
+  if(profile) renderDashboard();
+  renderMembershipCard();
+  previewInvoiceNumber();
+
+  const note = document.getElementById('resetAllDataNote');
+  if(note){ note.textContent = 'All sales data has been reset — your ledger is now empty and ready for real invoices.'; note.style.color = 'var(--sage)'; }
+  showToast('All sales data reset.');
 }
 const CN_REASON_LABELS = {
   sales_return:'Sales Return', discount:'Post-Sale Discount', deficiency:'Deficiency in Services',
@@ -2978,7 +3090,7 @@ function renderCreditNotesTable(){
 /* ================= PROFILE / ONBOARDING ================= */
 async function loadProfile(){
   try{
-    const res = await window.storage.get('fingertax_profile', false);
+    const res = await AppStorage.get('fingertax_profile');
     if(res && res.value){
       profile = JSON.parse(res.value);
       applyProfile();
@@ -3145,7 +3257,7 @@ async function saveBusinessProfile(){
   const wasComplete = isProfileComplete(profile);
 
   profile = Object.assign({}, profile, {name, email, gstin:gstinRaw, state, stateCode, address, scheme, freq});
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
 
   applyProfile();
   updateProfileCompletionUI();
@@ -3202,7 +3314,7 @@ async function saveIntegrations(){
   const note = document.getElementById('integrationsSaveNote');
   if(!profile){ return; }
   profile = Object.assign({}, profile, {integrations: {gstinVerifyKey: gstinKey, llmKey: llmKey}});
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   note.textContent = 'Integration keys saved (stored locally in your browser only).';
   note.style.color = 'var(--sage)';
   showToast('Integration keys saved.');
@@ -3249,7 +3361,7 @@ function handleLogoFileSelect(evt){
   reader.onload = async function(e){
     const dataUrl = e.target.result;
     profile = Object.assign({}, profile, {logoDataUrl: dataUrl});
-    try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(err){}
+    try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(err){}
     updateLogoPreview();
     note.textContent = 'Logo saved — it will now show on your invoices.';
     note.style.color = 'var(--sage)';
@@ -3265,7 +3377,7 @@ function handleLogoFileSelect(evt){
 async function removeLogo(){
   if(!profile || !profile.logoDataUrl){ showToast('No logo to remove.'); return; }
   profile = Object.assign({}, profile, {logoDataUrl: null});
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   updateLogoPreview();
   const note = document.getElementById('logoUploadNote');
   if(note){ note.textContent = 'Logo removed.'; note.style.color = 'var(--grey)'; }
@@ -3321,7 +3433,7 @@ async function saveProfile(){
     bank: {holder:'',bankName:'',bankNameOther:'',accountNumber:'',ifsc:'',branch:''},
     invoiceTheme: 'trade', invoicePrefix: 'INV-', invoiceSuffix: '', invoicePadding: 4
   };
-  try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_profile', JSON.stringify(profile)); }catch(e){}
   document.getElementById('onboardOverlay').style.display='none';
 
   var app = document.getElementById('appView');
@@ -3352,9 +3464,36 @@ async function mockGoogleSignIn(){
     showToast(result.error || 'Google sign-in failed — please try again.');
     return;
   }
+  label.textContent = 'Signed in as ' + result.email;
+
+  // Returning user signing in on a new device/browser: if a cloud backup already exists for
+  // this Google account, restore it straight into the app instead of starting from scratch.
+  const existing = await AppStorage.get('fingertax_profile');
+  if(existing && existing.value){
+    showToast('Welcome back — restoring your saved data…');
+    await loadInvoices();
+    await loadCreditNotes();
+    await loadCustomers();
+    await loadCustomerAdvances();
+    await loadTaxWallet();
+    await loadIffFilingStatus();
+    await loadRevenueEntries();
+    await loadProfile(); // last: applyProfile() inside here renders everything now that it's all loaded
+
+    document.getElementById('onboardOverlay').style.display='none';
+    var app = document.getElementById('appView');
+    var dashboard = document.querySelector('#appView .app');
+    dashboard.style.display='';
+    app.classList.add('entering');
+    window.scrollTo(0,0);
+    setTimeout(function(){ app.classList.remove('entering'); }, 550);
+    updateProfileCompletionUI();
+    switchTab('dashboard');
+    return;
+  }
+
   document.getElementById('obEmail').value = result.email;
   if(!document.getElementById('obName').value.trim() && result.name) document.getElementById('obName').value = result.name;
-  label.textContent = 'Signed in as ' + result.email;
   showToast('Signed in with Google.');
 }
 
@@ -5778,13 +5917,13 @@ window._editingCustomerId = null;
 
 async function loadCustomers(){
   try{
-    const res = await window.storage.get('fingertax_customers', false);
+    const res = await AppStorage.get('fingertax_customers');
     if(res && res.value) customers = JSON.parse(res.value);
   }catch(e){ customers = []; }
   renderPartywiseReport();
 }
 async function persistCustomers(){
-  try{ await window.storage.set('fingertax_customers', JSON.stringify(customers), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_customers', JSON.stringify(customers)); }catch(e){}
 }
 
 function openAddCustomer(){
@@ -5930,14 +6069,14 @@ window._payingRevenueId = null;
 
 async function loadRevenueEntries(){
   try{
-    const res = await window.storage.get('fingertax_revenue', false);
+    const res = await AppStorage.get('fingertax_revenue');
     if(res && res.value) revenueEntries = JSON.parse(res.value);
   }catch(e){ revenueEntries = []; }
   syncInvoicesToRevenue();
   renderRevenue();
 }
 async function persistRevenueEntries(){
-  try{ await window.storage.set('fingertax_revenue', JSON.stringify(revenueEntries), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_revenue', JSON.stringify(revenueEntries)); }catch(e){}
 }
 
 /* Every invoice IS earned revenue by definition — keep the Revenue tab in sync with Smart Invoicing
@@ -6283,12 +6422,12 @@ async function saveRevRefund(){
 let customerAdvances = {};
 async function loadCustomerAdvances(){
   try{
-    const res = await window.storage.get('fingertax_customer_advances', false);
+    const res = await AppStorage.get('fingertax_customer_advances');
     if(res && res.value) customerAdvances = JSON.parse(res.value);
   }catch(e){ customerAdvances = {}; }
 }
 async function persistCustomerAdvances(){
-  try{ await window.storage.set('fingertax_customer_advances', JSON.stringify(customerAdvances), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_customer_advances', JSON.stringify(customerAdvances)); }catch(e){}
 }
 function getCustomerAdvance(customerName){
   return customerAdvances[String(customerName||'').trim()] || 0;
@@ -8296,12 +8435,12 @@ let taxWalletLedger = {}; // periodLabel -> {liability, itcTotal, netPayable, ex
 
 async function loadTaxWallet(){
   try{
-    const res = await window.storage.get('fingertax_wallet', false);
+    const res = await AppStorage.get('fingertax_wallet');
     if(res && res.value) taxWalletLedger = JSON.parse(res.value);
   }catch(e){ taxWalletLedger = {}; }
 }
 async function persistTaxWallet(){
-  try{ await window.storage.set('fingertax_wallet', JSON.stringify(taxWalletLedger), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_wallet', JSON.stringify(taxWalletLedger)); }catch(e){}
 }
 
 function markGstr3bFiled(){
@@ -8564,12 +8703,12 @@ window._iffRowsById = {};
 let iffFilingStatus = {};
 async function loadIffFilingStatus(){
   try{
-    const res = await window.storage.get('fingertax_iff_filing', false);
+    const res = await AppStorage.get('fingertax_iff_filing');
     if(res && res.value) iffFilingStatus = JSON.parse(res.value);
   }catch(e){ iffFilingStatus = {}; }
 }
 async function persistIffFilingStatus(){
-  try{ await window.storage.set('fingertax_iff_filing', JSON.stringify(iffFilingStatus), false); }catch(e){}
+  try{ await AppStorage.set('fingertax_iff_filing', JSON.stringify(iffFilingStatus)); }catch(e){}
 }
 function updateIffFiledBadge(){
   const sel = document.getElementById('iffMonthSelect');
@@ -8846,7 +8985,7 @@ loadInvoices().then(loadCreditNotes).then(()=>{
      server-side (Cloud Functions), never from this browser script. -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
   import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
   // Firebase is used ONLY for Google Sign-In here — Firebase Auth does not require
@@ -8863,6 +9002,26 @@ loadInvoices().then(loadCreditNotes).then(()=>{
   const fbApp = initializeApp(firebaseConfig);
   const auth = getAuth(fbApp);
   const googleProvider = new GoogleAuthProvider();
+
+  // Resolves as soon as Firebase has restored (or confirmed there is no) signed-in
+  // session on page load. AppStorage awaits this once before its very first load,
+  // so it doesn't race ahead and decide "not signed in" before Firebase has had a
+  // chance to restore a real session from a previous visit.
+  let _resolveAuthReady;
+  window._fbAuthReady = new Promise(res => { _resolveAuthReady = res; });
+  onAuthStateChanged(auth, (user) => {
+    window._fbCurrentUser = user || null;
+    if (_resolveAuthReady) { _resolveAuthReady(user || null); _resolveAuthReady = null; }
+  });
+
+  // Returns the current user's Firebase ID token, or null if nobody is signed in
+  // with Google. AppStorage sends this as a Bearer token to the data-save/data-load
+  // Netlify Functions, which verify it server-side before touching Supabase.
+  window.fbGetIdToken = async function(){
+    const user = auth.currentUser || await window._fbAuthReady;
+    if(!user) return null;
+    try{ return await user.getIdToken(); }catch(e){ return null; }
+  };
 
   // ===== Supabase (subscription database — free tier, no card required) =====
   // TODO: replace these two with your own project's values from
