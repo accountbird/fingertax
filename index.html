@@ -1764,7 +1764,7 @@
       <div class="topbar"><div><h1>Profile</h1><div class="sub">Your registered business details</div></div></div>
 
       <div id="profileCompletionBanner" class="free-banner" style="display:none;background:var(--oxblood);">
-        <div>🔒 <b>Complete your business profile</b> — GSTIN, scheme, filing frequency and turnover are required before the rest of FingerTax unlocks.</div>
+        <div>🔒 <b>Complete your business profile</b> — GSTIN, scheme and filing frequency are required before the rest of FingerTax unlocks.</div>
       </div>
 
       <div class="grid grid-2">
@@ -1807,8 +1807,7 @@
               </select>
             </div>
           </div>
-          <label class="field">Estimated annual turnover <span style="text-transform:none;font-weight:700;color:var(--oxblood);">(required)</span></label>
-          <input id="bizTurnover" style="width:100%;" placeholder="e.g. 410000" oninput="markProfileDirty()">
+          <div class="note" style="margin-top:2px;">Your turnover isn't entered manually — FingerTax works it out from your actual sales invoices, and your plan is assigned automatically as that grows.</div>
           <div style="margin-top:16px;"><button class="btn primary sm" id="saveProfileBtn" onclick="saveBusinessProfile()">Save profile</button></div>
           <div class="note" id="profileSaveNote"></div>
         </div>
@@ -1896,7 +1895,7 @@
           <h2 class="section" style="margin-top:0;">FingerTax membership<div class="rule"></div></h2>
           <div class="kv"><span style="color:var(--grey);">Current plan</span><span id="pPlanName">—</span></div>
           <div class="kv"><span style="color:var(--grey);">Status</span><span id="pPlanStatus">—</span></div>
-          <div class="kv"><span style="color:var(--grey);">Turnover on file</span><span id="pPlanTurnover">—</span></div>
+          <div class="kv"><span style="color:var(--grey);">Actual turnover (from sales)</span><span id="pPlanTurnover">—</span></div>
           <div style="margin:14px 0;"><div class="progress-track" style="width:100%;"><div class="progress-fill" id="pPlanProgress" style="width:0%;"></div></div></div>
           <div class="note" id="pPlanNote">—</div>
           <div style="margin-top:14px;"><button class="btn gold sm" onclick="openSubscriptionModal()">View plans / Upgrade</button></div>
@@ -1944,7 +1943,7 @@
 
     <div class="card" style="background:var(--parchment);margin-bottom:16px;">
       <h2 class="section" style="margin-top:0;font-size:15px;">Step 1 — Complete your business profile <span style="color:var(--oxblood);">(required)</span><div class="rule"></div></h2>
-      <p style="font-size:13px;color:var(--ink-soft);line-height:1.6;margin:0;">Head to <b>Profile &amp; Settings</b> (top-right menu) and fill in your GSTIN, scheme, filing frequency and estimated turnover. Every other tab stays locked until this is saved — it's what FingerTax uses to build your dashboard, invoices and returns correctly.</p>
+      <p style="font-size:13px;color:var(--ink-soft);line-height:1.6;margin:0;">Head to <b>Profile &amp; Settings</b> (top-right menu) and fill in your GSTIN, scheme and filing frequency. Every other tab stays locked until this is saved — it's what FingerTax uses to build your dashboard, invoices and returns correctly. Your turnover is worked out automatically from your actual sales, no need to enter it.</p>
     </div>
 
     <h2 class="section" style="font-size:15px;">Step 2 — Explore the ledger<div class="rule"></div></h2>
@@ -2575,7 +2574,7 @@ const PLAN_INFO = {
 function getCurrentPlanKey(){
   const rs = window._realSubscription;
   if(rs && rs.status==='active' && PLAN_INFO[rs.plan]) return rs.plan;
-  const t = profile ? (Number(profile.turnover)||0) : 0;
+  const t = getActualTurnover();
   if(t > 1000000) return 'practice';
   if(t > 200000) return 'growth';
   return 'ledger';
@@ -2590,15 +2589,15 @@ function renderMembershipCard(){
   document.getElementById('pPlanStatus').textContent = key==='ledger'
     ? 'Active — Free forever'
     : (hasRealSub ? `Active — billed via Razorpay${rs.currentPeriodEnd ? (', renews '+new Date(rs.currentPeriodEnd).toLocaleDateString('en-IN')) : ''}` : 'Active (billing simulated in this demo)');
-  const turnover = Number(profile.turnover)||0;
+  const turnover = getActualTurnover();
   document.getElementById('pPlanTurnover').textContent = '₹'+turnover.toLocaleString('en-IN');
   const pct = key==='ledger' ? Math.min(100,(turnover/200000)*100) : (key==='growth' ? Math.min(100,(turnover/1000000)*100) : 100);
   document.getElementById('pPlanProgress').style.width = pct+'%';
   document.getElementById('pPlanNote').textContent = key==='ledger'
-    ? `You're ₹${Math.max(0,200000-turnover).toLocaleString('en-IN')} away from crossing into the Growth (₹999/mo) tier.`
+    ? `You're ₹${Math.max(0,200000-turnover).toLocaleString('en-IN')} in actual sales away from crossing into the Growth (₹999/mo) tier.`
     : (key==='growth'
-      ? `On the Growth plan (₹999/mo) — ₹${Math.max(0,1000000-turnover).toLocaleString('en-IN')} more turnover moves you to Practice-tier pricing.`
-      : 'Plan auto-assigned from your registered turnover — contact us to confirm billing.');
+      ? `On the Growth plan (₹999/mo) — ₹${Math.max(0,1000000-turnover).toLocaleString('en-IN')} more in actual sales moves you to Practice-tier pricing.`
+      : 'Plan auto-assigned from your actual sales turnover — contact us to confirm billing.');
   updateGatewayButtons();
 }
 async function setPreferredGateway(gw){
@@ -2811,15 +2810,46 @@ function hsnLookup(code){
   return HSN_SAC_DATA.find(h=>h.code===(code||'').trim()) || null;
 }
 
-const invoices = [
+let invoices = [
   {id:'INV-0140', inv:'INV-0140', buyer:'Kavita Handlooms', buyerGstin:'07XYZAB4321K1Z2', type:'b2b', typeLabel:'B2B', placeOfSupply:'07', hsn:'5007', items:[{desc:'Cotton fabric roll',hsn:'5007',qty:5,rate:2100,gstPct:18}], taxMode:'exclusive', currency:'INR', taxable:10500, gst:1890, status:'filed', theme:'trade'},
   {id:'INV-0141', inv:'INV-0141', buyer:'Walk-in / B2C', buyerGstin:'', type:'b2c', typeLabel:'B2C', placeOfSupply:'07', hsn:'5007', items:[{desc:'Retail counter sale',hsn:'5007',qty:1,rate:3200,gstPct:5}], taxMode:'exclusive', currency:'INR', taxable:3200, gst:160, status:'filed', theme:'retail'},
   {id:'INV-0142', inv:'INV-0142', buyer:'Kavita Handlooms', buyerGstin:'07XYZAB4321K1Z2', type:'b2b', typeLabel:'B2B', placeOfSupply:'07', hsn:'5007', items:[{desc:'Cotton fabric roll',hsn:'5007',qty:6,rate:2066.67,gstPct:18}], taxMode:'exclusive', currency:'INR', taxable:12400, gst:2232, status:'draft', theme:'trade'},
 ];
 
+/* These three sample invoices above are only ever shown to a brand-new user who hasn't saved
+   anything yet — loadInvoices() below overwrites them with the user's real, saved data as soon
+   as any exists. Every function that creates, edits, or deletes an invoice must call
+   persistInvoices() afterwards or the change will be lost on reload/re-login. */
+async function loadInvoices(){
+  try{
+    const res = await window.storage.get('fingertax_invoices', false);
+    if(res && res.value){
+      const saved = JSON.parse(res.value);
+      invoices = saved.items || [];
+      if(saved.seq) invoiceSeq = saved.seq;
+    }
+  }catch(e){ /* nothing saved yet — keep the sample invoices above */ }
+}
+async function persistInvoices(){
+  try{ await window.storage.set('fingertax_invoices', JSON.stringify({seq: invoiceSeq, items: invoices}), false); }catch(e){}
+}
+
 /* ================= CREDIT NOTES ================= */
 let creditNoteSeq = 12;
-const creditNotes = [];
+let creditNotes = [];
+async function loadCreditNotes(){
+  try{
+    const res = await window.storage.get('fingertax_creditnotes', false);
+    if(res && res.value){
+      const saved = JSON.parse(res.value);
+      creditNotes = saved.items || [];
+      if(saved.seq) creditNoteSeq = saved.seq;
+    }
+  }catch(e){ /* nothing saved yet */ }
+}
+async function persistCreditNotes(){
+  try{ await window.storage.set('fingertax_creditnotes', JSON.stringify({seq: creditNoteSeq, items: creditNotes}), false); }catch(e){}
+}
 const CN_REASON_LABELS = {
   sales_return:'Sales Return', discount:'Post-Sale Discount', deficiency:'Deficiency in Services',
   change_pos:'Change in POS / Rate', correction:'Correction in Invoice', other:'Other'
@@ -2909,6 +2939,7 @@ function saveCreditNote(){
     isInterState: t.isInterState, status:'issued'
   };
   creditNotes.push(cn);
+  persistCreditNotes();
   renderCreditNotesTable();
   renderSalesReport();
   renderPartywiseReport();
@@ -2919,6 +2950,7 @@ function saveCreditNote(){
 function deleteCreditNote(id){
   const idx = creditNotes.findIndex(c=>c.id===id);
   if(idx>-1) creditNotes.splice(idx,1);
+  persistCreditNotes();
   renderCreditNotesTable();
   renderSalesReport();
   renderPartywiseReport();
@@ -3015,13 +3047,24 @@ function markProfileDirty(){
 }
 
 /* A profile only counts as "complete" once the fields FingerTax actually
-   needs to compute returns are in place — GSTIN (valid) and turnover.
-   Scheme/frequency always carry a sane default from their dropdowns. */
+   needs to compute returns are in place — a valid GSTIN. Scheme/frequency
+   always carry a sane default from their dropdowns. Turnover is no longer
+   self-reported here — it's derived automatically from actual sales via
+   getActualTurnover(). */
 function isProfileComplete(p){
   if(!p) return false;
-  const gstinOk = !!p.gstin && p.gstin !== '—' && isValidGstinFormat(p.gstin);
-  const turnoverOk = !!p.turnover && Number(p.turnover) > 0;
-  return gstinOk && turnoverOk;
+  return !!p.gstin && p.gstin !== '—' && isValidGstinFormat(p.gstin);
+}
+
+/* ================= ACTUAL TURNOVER (derived from real sales, not self-reported) =================
+   Subscription tier, dashboard stats and e-invoicing thresholds are all based on this — the sum of
+   taxable value across non-draft sales invoices, net of credit notes issued against them. */
+function getActualTurnover(){
+  const invoiceTotal = invoices
+    .filter(v=>v.status!=='draft')
+    .reduce((s,v)=>s+(Number(v.taxable)||0), 0);
+  const creditNoteTotal = creditNotes.reduce((s,cn)=>s+(Number(cn.taxable)||0), 0);
+  return Math.max(0, invoiceTotal - creditNoteTotal);
 }
 
 /* ================= FILING DUE-DATE WARNING (shared: invoices + credit notes) ================= */
@@ -3073,7 +3116,6 @@ function updateProfileCompletionUI(){
 
 async function saveBusinessProfile(){
   const gstinRaw = document.getElementById('bizGstin').value.trim().toUpperCase();
-  const turnoverVal = parseFloat(document.getElementById('bizTurnover').value);
   const note = document.getElementById('profileSaveNote');
 
   if(!gstinRaw || !isValidGstinFormat(gstinRaw)){
@@ -3088,13 +3130,6 @@ async function saveBusinessProfile(){
     document.getElementById('bizGstin').focus();
     return;
   }
-  if(!turnoverVal || turnoverVal<=0){
-    note.textContent = 'Please enter your estimated annual turnover — it\'s required before you can continue.';
-    note.style.color = 'var(--oxblood)';
-    document.getElementById('bizTurnover').focus();
-    return;
-  }
-
   const name = document.getElementById('bizName').value.trim() || (profile && profile.name) || 'Your Business';
   const email = document.getElementById('bizEmail').value.trim();
   const stateCode = gstinRaw.slice(0,2);
@@ -3109,7 +3144,7 @@ async function saveBusinessProfile(){
   const freq = document.getElementById('bizFreq').value;
   const wasComplete = isProfileComplete(profile);
 
-  profile = Object.assign({}, profile, {name, email, gstin:gstinRaw, state, stateCode, address, scheme, freq, turnover:turnoverVal});
+  profile = Object.assign({}, profile, {name, email, gstin:gstinRaw, state, stateCode, address, scheme, freq});
   try{ await window.storage.set('fingertax_profile', JSON.stringify(profile), false); }catch(e){}
 
   applyProfile();
@@ -3272,16 +3307,17 @@ function closeTutorial(){
 
 async function saveProfile(){
   // Lightweight sign-up only — just enough to enter the ledger. GSTIN,
-  // address, scheme, filing frequency and turnover are collected next,
-  // in Profile & Settings, and are mandatory there before anything else
-  // unlocks (see isProfileComplete()/saveBusinessProfile()).
+  // address, scheme and filing frequency are collected next, in Profile &
+  // Settings, and GSTIN is mandatory there before anything else unlocks
+  // (see isProfileComplete()/saveBusinessProfile()). Turnover is never
+  // collected — it's derived automatically from actual sales.
   const name = document.getElementById('obName').value.trim() || 'Your Business';
   const email = document.getElementById('obEmail').value.trim();
   profile = {
     name, email,
     gstin: '—', state: 'Unknown', stateCode: '',
     address: {line1:'', line2:'', city:'', pincode:''},
-    scheme: 'regular', freq: 'monthly', turnover: 0,
+    scheme: 'regular', freq: 'monthly',
     bank: {holder:'',bankName:'',bankNameOther:'',accountNumber:'',ifsc:'',branch:''},
     invoiceTheme: 'trade', invoicePrefix: 'INV-', invoiceSuffix: '', invoicePadding: 4
   };
@@ -3340,7 +3376,6 @@ function applyProfile(){
   document.getElementById('bizPincode').value = addr.pincode || '';
   document.getElementById('bizScheme').value = profile.scheme || 'regular';
   document.getElementById('bizFreq').value = profile.freq || 'monthly';
-  document.getElementById('bizTurnover').value = profile.turnover || '';
   const ints = profile.integrations || {};
   const intGstinEl = document.getElementById('intGstinKey');
   const intLlmEl = document.getElementById('intLlmKey');
@@ -3913,7 +3948,7 @@ function renderDashboard(){
   document.getElementById('statDue').textContent = d.dueLabel;
   document.getElementById('statDueNote').textContent = d.dueNote;
 
-  const regTurnover = Number(profile.turnover)||0;
+  const regTurnover = getActualTurnover();
   const planKey = getCurrentPlanKey();
   const msgEl = document.getElementById('dashboardPlanMsg');
   const freePct = planKey==='ledger' ? Math.min(100, (regTurnover/200000)*100) : (planKey==='growth' ? Math.min(100,(regTurnover/1000000)*100) : 100);
@@ -3922,7 +3957,7 @@ function renderDashboard(){
     msgEl.innerHTML = `You're on the <b>Ledger (Free)</b> plan — full invoicing &amp; auto-filing, no cost up to ₹2L turnover.`;
     document.getElementById('freeProgressLabel').textContent = `₹${(regTurnover/100000).toFixed(1)}L / ₹2L`;
   } else if(planKey==='growth'){
-    msgEl.innerHTML = `You're on the <b>Growth (₹999/mo)</b> plan — registered turnover between ₹2L and ₹10L.`;
+    msgEl.innerHTML = `You're on the <b>Growth (₹999/mo)</b> plan — actual sales turnover between ₹2L and ₹10L.`;
     document.getElementById('freeProgressLabel').textContent = `₹${(regTurnover/100000).toFixed(1)}L / ₹10L`;
   } else {
     msgEl.innerHTML = `You're on the <b>Practice</b> plan — turnover above ₹10L. <a href="#" onclick="switchTab('profile');return false;" style="color:inherit;text-decoration:underline;">Manage billing</a>`;
@@ -3998,12 +4033,15 @@ function cloneInvoice(id){
   const newNo = formatInvoiceNumber(invoiceSeq);
   clone.id = newNo; clone.inv = newNo; clone.status = 'draft';
   invoices.push(clone);
+  persistInvoices();
   renderInvoiceTable(); drawBestCustomerChart();
   showToast(`Cloned as ${clone.inv}.`);
 }
 function deleteInvoice(id){
   const idx = invoices.findIndex(v=>v.id===id);
   if(idx>-1) invoices.splice(idx,1);
+  persistInvoices();
+  removeRevenueForInvoiceIds(id);
   selectedIds.delete(id);
   renderInvoiceTable(); drawBestCustomerChart();
   showToast(`${id} deleted.`);
@@ -4040,6 +4078,7 @@ function bulkClone(){
     clone.id = newNo; clone.inv = newNo; clone.status = 'draft';
     invoices.push(clone);
   });
+  persistInvoices();
   selectedIds.clear();
   renderInvoiceTable(); drawBestCustomerChart();
   showToast(`${ids.length} invoice(s) cloned.`);
@@ -4047,6 +4086,8 @@ function bulkClone(){
 function bulkDelete(){
   const ids = [...selectedIds];
   ids.forEach(id=>{ const idx = invoices.findIndex(v=>v.id===id); if(idx>-1) invoices.splice(idx,1); });
+  persistInvoices();
+  removeRevenueForInvoiceIds(ids);
   selectedIds.clear();
   renderInvoiceTable(); drawBestCustomerChart();
   showToast(`${ids.length} invoice(s) deleted.`);
@@ -4670,6 +4711,7 @@ function saveVoucher(){
       Object.assign(inv, {buyer, buyerGstin, type, typeLabel:typeLabels[type], placeOfSupply, hsn, items, taxMode, currency, taxable, gst, theme, ewbRequired, ewbThreshold, rcm, invDate, inv:finalInvNo});
       ensureRevenueEntryForInvoice(inv, null);
       persistRevenueEntries();
+      persistInvoices();
     }
     renderInvoiceTable(); drawBestCustomerChart();
     closeVoucher();
@@ -4685,6 +4727,7 @@ function saveVoucher(){
   invoiceSeq++;
   const newInv = {id:finalInvNo, inv:finalInvNo, invDate, buyer, buyerGstin, type, typeLabel:typeLabels[type], placeOfSupply, hsn, items, taxMode, currency, taxable, gst, status:'draft', theme, ewbRequired, ewbThreshold, rcm};
   invoices.push(newInv);
+  persistInvoices();
   const receivedNow = parseFloat(document.getElementById('vReceivedNow').value)||0;
   ensureRevenueEntryForInvoice(newInv, receivedNow);
   persistRevenueEntries();
@@ -5940,6 +5983,17 @@ function syncInvoicesToRevenue(){
   if(changed) persistRevenueEntries();
 }
 
+/* An invoice's revenue/receivable entry only exists because the invoice does — once the invoice
+   is deleted (individually, in bulk, or via a party-wide delete), its linked revenue entry (and
+   whatever's still outstanding on it) must go too, or the receivable keeps showing a balance for
+   a sale that no longer exists. */
+function removeRevenueForInvoiceIds(ids){
+  const idSet = new Set(Array.isArray(ids) ? ids : [ids]);
+  const before = revenueEntries.length;
+  revenueEntries = revenueEntries.filter(r=>!idSet.has(r.linkedInvoiceId));
+  if(revenueEntries.length!==before){ persistRevenueEntries(); renderRevenue(); }
+}
+
 function populateRevInvoiceSelect(){
   const sel = document.getElementById('revInvoiceSelect');
   sel.innerHTML = '<option value="">— No linked invoice —</option>' +
@@ -6781,6 +6835,9 @@ function pwDeleteParty(i){
     const idx = creditNotes.findIndex(x=>x.id===cn.id);
     if(idx>-1) creditNotes.splice(idx,1);
   });
+  persistInvoices();
+  persistCreditNotes();
+  removeRevenueForInvoiceIds(p.invRecords.map(v=>v.id));
   pwExpandedIdx = null; pwMagicMenuOpenIdx = null;
   renderInvoiceTable(); renderCreditNotesTable(); drawBestCustomerChart(); renderSalesReport();
   renderPartywiseReport();
@@ -8184,10 +8241,11 @@ function runConfidenceCheck(){
     }
   }
 
-  if(profile && profile.turnover){
-    if(profile.turnover >= 100000000){
+  if(profile){
+    const actualTurnover = getActualTurnover();
+    if(actualTurnover >= 100000000){
       checks.push({status:'warn', label:'E-invoice reporting window applies', detail:'Turnover ≥ ₹10 Cr — B2B e-invoices must be reported to the IRP within 30 days of the invoice date.'});
-    } else if(profile.turnover >= 50000000){
+    } else if(actualTurnover >= 50000000){
       checks.push({status:'warn', label:'E-invoicing is mandatory', detail:'Turnover ≥ ₹5 Cr — e-invoices are mandatory for B2B supplies (effective 1 April 2026).'});
     }
   }
@@ -8766,11 +8824,17 @@ function showToast(msg){
 populatePeriodSelect();
 populateGstr1PeriodSelect();
 populateIffMonthSelect();
-loadTaxWallet().then(loadProfile);
 loadCustomers();
-loadRevenueEntries();
 loadCustomerAdvances();
 loadIffFilingStatus();
+// Invoices and credit notes must be loaded before profile/dashboard rendering runs against them
+// (applyProfile() calls renderInvoiceTable/renderCreditNotesTable/renderDashboard), and before
+// revenue entries sync against invoices — otherwise the first paint after a slow storage read
+// would briefly show placeholder sample data instead of the user's real saved records.
+loadInvoices().then(loadCreditNotes).then(()=>{
+  loadRevenueEntries();
+  loadTaxWallet().then(loadProfile);
+});
 
 </script>
 
