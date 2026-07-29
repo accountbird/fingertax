@@ -1,0 +1,9 @@
+{
+  "name": "fingertax",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "@supabase/supabase-js": "^2.45.4"
+  }
+}
