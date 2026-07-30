@@ -2374,6 +2374,21 @@ let profile = null;
 const AppStorage = {
   useNative: (typeof window !== 'undefined' && !!window.storage),
   localKey(key){ return 'fingertax:'+key; },
+  _warnedCloud: false,
+  // Every cloud failure used to vanish into an empty catch block, so there was no way to tell
+  // "it's saving to the cloud" apart from "it silently isn't". This logs the real reason to the
+  // console (function missing = 404, bad/expired token = 401, table/RLS problem = 500, or a plain
+  // network/CORS failure) and shows ONE toast per page load so it's visible without opening
+  // devtools, without spamming a toast on every single autosave.
+  _reportCloudIssue(action, detail){
+    console.error('[AppStorage] cloud '+action+' failed:', detail);
+    if(!this._warnedCloud){
+      this._warnedCloud = true;
+      if(typeof showToast === 'function'){
+        showToast('Cloud backup isn\'t reachable right now — saving locally on this device only. (See console for details.)');
+      }
+    }
+  },
 
   async get(key){
     if(this.useNative){
@@ -2383,18 +2398,30 @@ const AppStorage = {
       try{
         const token = await window.fbGetIdToken();
         if(token){
-          const res = await fetch('/.netlify/functions/data-load?key='+encodeURIComponent(key), {
-            headers: { Authorization: 'Bearer '+token }
-          });
-          if(res.ok){
-            const data = await res.json();
-            if(data && data.value!=null){
-              try{ window.localStorage.setItem(this.localKey(key), data.value); }catch(e){}
-              return {key, value:data.value, shared:false};
+          let res;
+          try{
+            res = await fetch('/.netlify/functions/data-load?key='+encodeURIComponent(key), {
+              headers: { Authorization: 'Bearer '+token }
+            });
+          }catch(networkErr){
+            this._reportCloudIssue('load ('+key+')', 'network/CORS error — '+networkErr.message);
+            res = null;
+          }
+          if(res){
+            if(res.ok){
+              const data = await res.json();
+              if(data && data.value!=null){
+                try{ window.localStorage.setItem(this.localKey(key), data.value); }catch(e){}
+                return {key, value:data.value, shared:false};
+              }
+              // res.ok with no data.value just means "nothing saved for this key yet" — not an error.
+            }else{
+              const bodyText = await res.text().catch(()=> '');
+              this._reportCloudIssue('load ('+key+')', 'HTTP '+res.status+' — '+bodyText.slice(0,300));
             }
           }
         }
-      }catch(e){ /* offline, or the function isn't deployed yet — fall back to the local cache */ }
+      }catch(e){ this._reportCloudIssue('load ('+key+')', e.message||e); }
     }
     try{
       const raw = window.localStorage.getItem(this.localKey(key));
@@ -2412,13 +2439,23 @@ const AppStorage = {
       try{
         const token = await window.fbGetIdToken();
         if(token){
-          await fetch('/.netlify/functions/data-save', {
-            method:'POST',
-            headers: { 'Content-Type':'application/json', Authorization:'Bearer '+token },
-            body: JSON.stringify({key, value})
-          });
+          let res;
+          try{
+            res = await fetch('/.netlify/functions/data-save', {
+              method:'POST',
+              headers: { 'Content-Type':'application/json', Authorization:'Bearer '+token },
+              body: JSON.stringify({key, value})
+            });
+          }catch(networkErr){
+            this._reportCloudIssue('save ('+key+')', 'network/CORS error — '+networkErr.message);
+            res = null;
+          }
+          if(res && !res.ok){
+            const bodyText = await res.text().catch(()=> '');
+            this._reportCloudIssue('save ('+key+')', 'HTTP '+res.status+' — '+bodyText.slice(0,300));
+          }
         }
-      }catch(e){ /* offline — the local copy above is already safe; next successful save syncs it */ }
+      }catch(e){ this._reportCloudIssue('save ('+key+')', e.message||e); }
     }
     return {key, value, shared:false};
   }
@@ -8959,21 +8996,37 @@ function showToast(msg){
   setTimeout(() => el.remove(), 3200);
 }
 
-/* ================= INIT ================= */
-populatePeriodSelect();
-populateGstr1PeriodSelect();
-populateIffMonthSelect();
-loadCustomers();
-loadCustomerAdvances();
-loadIffFilingStatus();
-// Invoices and credit notes must be loaded before profile/dashboard rendering runs against them
-// (applyProfile() calls renderInvoiceTable/renderCreditNotesTable/renderDashboard), and before
-// revenue entries sync against invoices — otherwise the first paint after a slow storage read
-// would briefly show placeholder sample data instead of the user's real saved records.
-loadInvoices().then(loadCreditNotes).then(()=>{
-  loadRevenueEntries();
-  loadTaxWallet().then(loadProfile);
-});
+/* ================= INIT =================
+   This whole block used to run immediately (classic script, synchronous at parse time), which is
+   BEFORE the Firebase <script type="module"> further down the page has executed — module scripts
+   always run after document parsing finishes. That meant window.fbGetIdToken didn't exist yet when
+   AppStorage.get() ran, so the "cloud" tier of AppStorage was silently skipped on every page load,
+   even for someone with an already-signed-in Google session on that device: they'd only ever see
+   their cloud backup after manually clicking "Sign in with Google" again. Running this on
+   DOMContentLoaded instead guarantees the Firebase module has already executed, so fbGetIdToken/
+   _fbAuthReady exist and AppStorage.get() can actually reach the cloud on first load. */
+function runInitialLoad(){
+  populatePeriodSelect();
+  populateGstr1PeriodSelect();
+  populateIffMonthSelect();
+  loadCustomers();
+  loadCustomerAdvances();
+  loadIffFilingStatus();
+  // Invoices and credit notes must be loaded before profile/dashboard rendering runs against them
+  // (applyProfile() calls renderInvoiceTable/renderCreditNotesTable/renderDashboard), and before
+  // revenue entries sync against invoices — otherwise the first paint after a slow storage read
+  // would briefly show placeholder sample data instead of the user's real saved records.
+  loadInvoices().then(loadCreditNotes).then(()=>{
+    loadRevenueEntries();
+    loadTaxWallet().then(loadProfile);
+  });
+}
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', runInitialLoad);
+}else{
+  // Document already parsed (e.g. script injected late) — safe to run right away.
+  runInitialLoad();
+}
 
 </script>
 
