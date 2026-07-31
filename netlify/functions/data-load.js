@@ -2,25 +2,49 @@
 //
 // Called by the browser as: GET /.netlify/functions/data-load?key=fingertax_profile
 // Header: Authorization: Bearer <Firebase ID token>
-//
-// Only ever returns the row for the UID decoded from the verified token —
-// there is no way for the caller to ask for another user's data.
 
 const admin = require('firebase-admin');
 const { createClient } = require('@supabase/supabase-js');
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)),
-  });
+function getEnvOrThrow(name) {
+  const v = process.env[name];
+  if (!v || !v.trim()) {
+    throw new Error(`Missing environment variable: ${name}`);
+  }
+  return v;
 }
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+let supabaseAdmin;
+let envError = null;
+
+try {
+  const SUPABASE_URL = getEnvOrThrow('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnvOrThrow('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (!SUPABASE_SERVICE_ROLE_KEY.startsWith('eyJ') || (SUPABASE_SERVICE_ROLE_KEY.match(/\./g) || []).length !== 2) {
+    throw new Error(
+      'SUPABASE_SERVICE_ROLE_KEY does not look like a valid JWT. ' +
+      'Go to Supabase → Project Settings → API → "service_role" secret and copy that exact value (not the anon/publishable key, not the project ref/URL).'
+    );
+  }
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(JSON.parse(getEnvOrThrow('FIREBASE_SERVICE_ACCOUNT_KEY'))),
+    });
+  }
+
+  supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+} catch (e) {
+  envError = e.message;
+}
 
 exports.handler = async (event) => {
+  if (envError) {
+    console.error('Configuration error:', envError);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Server misconfigured', detail: envError }) };
+  }
+
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
@@ -53,7 +77,7 @@ exports.handler = async (event) => {
 
   if (error) {
     console.error('Supabase read error:', error);
-    return { statusCode: 500, body: JSON.stringify({ error: 'Load failed' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: 'Load failed', detail: error.message }) };
   }
 
   return {
