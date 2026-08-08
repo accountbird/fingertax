@@ -381,6 +381,8 @@
   }
   .ribbon .dot{width:6px;height:6px;border-radius:50%;background:var(--oxblood);animation:pulse 2s infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+  .manual-signup-highlight{animation:manualSignupPulse 1.4s ease-in-out 2;border-radius:4px;}
+  @keyframes manualSignupPulse{0%,100%{box-shadow:0 0 0 0 rgba(156,122,60,0);}50%{box-shadow:0 0 0 6px rgba(156,122,60,0.18);}}
 
   .pillars{
     max-width:1100px;margin:80px auto 0 auto;padding:0 24px 100px 24px;
@@ -924,12 +926,16 @@
       </svg>
       <span id="googleBtnLabel">Sign in with Google</span>
     </button>
+    <div class="note" style="margin-top:8px;">Google sign-in only works once this exact URL is added in <b>Firebase Console → Authentication → Settings → Authorized domains</b> — that's a one-time Firebase setting, not something this file can turn on by itself, and it's required even for a temporary preview link (not just a final production domain). If you're opening this file straight from your computer (a <code>file://</code> address) rather than a live URL, Google sign-in cannot work at all, on any settings — browsers block it for that address type.</div>
+    <div style="text-align:center;margin-top:8px;"><a href="#" onclick="skipSignInForTesting();return false;" style="font-size:12.5px;color:var(--brass);font-weight:600;">Skip sign-in — continue without an account →</a></div>
     <div class="or-divider"><span>or sign up manually</span></div>
-
-    <label class="field">Business name</label>
-    <input id="obName" style="width:100%;" placeholder="e.g. Ramesh Textiles">
-    <label class="field">Email <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
-    <input id="obEmail" type="email" style="width:100%;" placeholder="you@business.com">
+    <div id="manualSignupBlock">
+      <label class="field">Business name</label>
+      <input id="obName" style="width:100%;" placeholder="e.g. Ramesh Textiles">
+      <label class="field">Email <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
+      <input id="obEmail" type="email" style="width:100%;" placeholder="you@business.com">
+      <div class="note" id="manualSignupNote" style="margin-top:6px;">Works instantly on any screen — no Google account or domain setup needed, so it's the fastest way to try FingerTax locally.</div>
+    </div>
 
     <div class="note" style="margin-top:14px;">GSTIN, address, scheme and other business details are set up in your Profile right after you sign in.</div>
 
@@ -952,6 +958,7 @@
       <li class="tab sub-tab group-sales group-hidden" data-panel="invoices">Smart Invoicing</li>
       <li class="tab sub-tab group-sales group-hidden" data-panel="revenue">Revenue</li>
       <li class="tab sub-tab group-sales group-hidden" data-panel="salesReport">Sales Report</li>
+      <li class="tab sub-tab group-sales group-hidden" data-panel="customers">Customers</li>
       <li class="tab sub-tab group-sales group-hidden" data-panel="partywiseReport">Customer wise Report</li>
 
       <li class="nav-heading" data-group="compliance" onclick="toggleNavGroup('compliance')"><span><span class="nav-chevron">▸</span> Compliance</span></li>
@@ -1126,10 +1133,13 @@
       <div class="topbar">
         <div><h1>Smart Invoicing</h1><div class="sub">Create and issue GST-compliant sales vouchers</div></div>
         <div style="display:flex;gap:10px;">
+          <button class="btn ghost" onclick="document.getElementById('salesImportFileInput').click()">⭳ Import from Tally / Busy</button>
+          <input type="file" id="salesImportFileInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleSalesImportFileSelect(event)">
           <button class="btn ghost" onclick="openCreditNote()">+ New Credit Note</button>
           <button class="btn primary" onclick="openVoucher()">+ New Sales Voucher</button>
         </div>
       </div>
+      <div class="note" style="margin-top:0;">Already recording sales in Tally, Busy, or similar software? Import the Sales Register (Excel or CSV) and FingerTax will auto-create a voucher for every bill — ready to feed your Sales Report, Customer-wise Report, HSN Summary and GSTR-1.</div>
 
       <div class="grid grid-2">
         <div class="card">
@@ -1173,6 +1183,57 @@
       <table class="ledger" id="creditNoteTable"></table>
       <div class="note">Credit notes reduce net taxable value and tax against the linked invoice — they flow into Table 9B of GSTR-1, net outward liability in GSTR-3B, and the Sales &amp; Customer wise reports.</div>
     </section>
+
+    <!-- SALES IMPORT (TALLY / BUSY / GENERIC EXCEL OR CSV) -->
+    <div class="modal-backdrop" id="salesImportBackdrop">
+      <div class="modal" style="width:980px;max-width:97vw;max-height:88vh;overflow-y:auto;">
+        <h2>Import Sales Register</h2>
+        <div class="note" style="margin-top:0;">Import a Sales Register exported from Tally, Busy, or similar accounting software (Excel or CSV). FingerTax reads the Bill/Invoice No., Date, Party, GSTIN and tax columns and creates a sales voucher for every row — no re-typing.</div>
+
+        <div id="salesImportFileMeta" style="display:none;margin-top:14px;">
+          <div class="card" style="background:var(--parchment-deep);">
+            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:flex-start;">
+              <div style="font-size:12.5px;line-height:1.6;">
+                <div><b id="salesImportFileName">—</b></div>
+                <div id="salesImportSheetInfo" style="color:var(--grey);margin-top:2px;"></div>
+              </div>
+              <button class="btn ghost sm" onclick="document.getElementById('salesImportFileInput').click()">Choose a different file</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="salesImportMappingBox" style="display:none;margin-top:16px;">
+          <h2 class="section">Column mapping <span style="font-size:11px;font-weight:400;color:var(--brass);text-transform:none;">— auto-detected from the file, adjust anything that looks wrong</span><div class="rule"></div></h2>
+          <div id="salesImportMappingGrid" class="grid grid-3" style="gap:10px;"></div>
+          <div style="margin-top:10px;"><button class="btn ghost sm" onclick="reparseSalesImport()">↺ Re-apply mapping</button></div>
+        </div>
+
+        <div id="salesImportSummaryBox" style="display:none;margin-top:18px;">
+          <h2 class="section">Preview<div class="rule"></div></h2>
+          <div class="grid grid-4" style="margin-bottom:12px;">
+            <div class="card"><div class="stat-label">Rows found</div><div class="stat-value" id="siStatFound" style="font-size:20px;">0</div></div>
+            <div class="card"><div class="stat-label">Ready to import</div><div class="stat-value" id="siStatValid" style="font-size:20px;color:var(--sage);">0</div></div>
+            <div class="card"><div class="stat-label">Already in ledger</div><div class="stat-value" id="siStatDup" style="font-size:20px;color:var(--brass);">0</div></div>
+            <div class="card"><div class="stat-label">Skipped / errors</div><div class="stat-value" id="siStatError" style="font-size:20px;color:var(--oxblood);">0</div></div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+            <div style="font-size:12px;color:var(--grey);">Rows whose Bill/Invoice No. already exists on your ledger are skipped by default.</div>
+            <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="siOverwriteDup" onchange="renderSalesImportPreview()"> Overwrite duplicates instead of skipping</label>
+          </div>
+
+          <div style="overflow-x:auto;">
+            <table class="ledger" id="salesImportTable"></table>
+          </div>
+          <div class="note" id="salesImportFootnote" style="margin-top:10px;"></div>
+        </div>
+
+        <div style="margin-top:22px;display:flex;justify-content:flex-end;gap:10px;">
+          <button class="btn ghost sm" onclick="closeSalesImportModal()">Cancel</button>
+          <button class="btn primary sm" id="salesImportConfirmBtn" onclick="confirmSalesImport()" disabled>Import 0 invoices</button>
+        </div>
+      </div>
+    </div>
 
     <!-- REVENUE -->
     <section class="panel" id="revenue">
@@ -1353,6 +1414,19 @@
         <button class="btn gold sm" onclick="exportSalesReport('xlsx')">Export Excel</button>
         <button class="btn gold sm" onclick="exportSalesReport('json')">Export JSON</button>
       </div>
+    </section>
+
+    <!-- CUSTOMERS (master profiles — separate from the sales-metrics-driven Customer wise Report) -->
+    <section class="panel" id="customers">
+      <div class="topbar">
+        <div><h1>Customers</h1><div class="sub">Maintain trade name, GSTIN, PAN, address and contact details once — reuse them on every sales voucher</div></div>
+        <button class="btn primary" onclick="openAddCustomer()">+ Add Customer</button>
+      </div>
+      <div class="note" style="margin-top:0;">Saved here, a customer's name and GSTIN auto-suggest while creating a Smart Invoice — pick them from the list and their GSTIN fills in automatically instead of retyping it every time.</div>
+      <div style="margin:14px 0;">
+        <input id="custSearchBox" type="text" placeholder="Search by trade name, GSTIN, PAN, phone, email or city" style="width:340px;" oninput="renderCustomersPanel()">
+      </div>
+      <table class="ledger" id="customersTable"></table>
     </section>
 
     <!-- PARTYWISE REPORT -->
@@ -1617,7 +1691,7 @@
     <div class="modal-backdrop" id="customerBackdrop">
       <div class="modal">
         <h2 id="customerModalTitle">Add New Customer</h2>
-        <label class="field" style="margin-top:0;">Customer name <span style="text-transform:none;font-weight:700;color:var(--oxblood);">(required)</span></label>
+        <label class="field" style="margin-top:0;">Trade name <span style="text-transform:none;font-weight:700;color:var(--oxblood);">(required)</span></label>
         <input id="custName" style="width:100%;" placeholder="e.g. Kavita Handlooms">
         <label class="field">Email <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
         <input id="custEmail" type="email" style="width:100%;" placeholder="customer@email.com">
@@ -1626,6 +1700,9 @@
           <div><label class="field">State <span style="text-transform:none;font-weight:400;color:var(--brass);">(auto-detected)</span></label><input id="custState" style="width:100%;background:var(--parchment-deep);" readonly placeholder="Enter GSTIN to detect"></div>
         </div>
         <div class="note" id="custGstinNote" style="margin-top:2px;"></div>
+        <label class="field">PAN <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
+        <input id="custPan" style="width:100%;" placeholder="AAFCB9951P" maxlength="10" oninput="onCustPanInput()">
+        <div class="note" id="custPanNote" style="margin-top:2px;"></div>
         <label class="field">Phone <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
         <input id="custPhone" style="width:100%;" placeholder="e.g. 98765 43210">
         <label class="field">Address <span style="text-transform:none;font-weight:400;color:var(--grey);">(optional)</span></label>
@@ -2025,9 +2102,10 @@
     <div class="note" id="vReceivedNowEditNote" style="display:none;"></div>
 
     <div class="form-row">
-      <div><label class="field">Buyer name</label><input id="vBuyer" style="width:100%;" placeholder="e.g. Kavita Handlooms" oninput="checkVBuyerAdvance()"></div>
+      <div><label class="field">Buyer name</label><input id="vBuyer" list="vBuyerCustomerList" style="width:100%;" placeholder="e.g. Kavita Handlooms" oninput="checkVBuyerAdvance();onVBuyerNameInput();"></div>
       <div><label class="field" id="vGstinLabel">Buyer GSTIN</label><input id="vGstin" style="width:100%;" placeholder="07XYZAB4321K1Z2" maxlength="15" oninput="onVGstinInput()"></div>
     </div>
+    <datalist id="vBuyerCustomerList"></datalist>
     <div class="note" id="vAdvanceNote" style="display:none;margin-top:2px;"></div>
     <div class="form-row" id="posRow">
       <div>
@@ -2107,11 +2185,14 @@
 <div class="modal-backdrop" id="cnBackdrop">
   <div class="modal" style="position:relative;width:560px;">
     <button class="close-x" onclick="closeCreditNote()">×</button>
-    <h2>New Credit Note</h2>
+    <h2 id="cnModalTitle">New Credit Note</h2>
     <div class="sub" style="font-size:12.5px;color:var(--grey);margin-bottom:14px;">Reduces taxable value / tax against a previously issued invoice — reported under GSTR-1 Table 9B.</div>
 
-    <label class="field" style="margin-top:0;">Original invoice</label>
-    <select id="cnInvoiceSelect" style="width:100%;" onchange="onCnInvoiceChange()"></select>
+    <label class="field" style="margin-top:0;">Customer</label>
+    <select id="cnCustomerSelect" style="width:100%;" onchange="onCnCustomerChange()"></select>
+
+    <label class="field">Original invoice</label>
+    <select id="cnInvoiceSelect" style="width:100%;" onchange="onCnInvoiceChange()" disabled></select>
     <div class="note" id="cnLinkedNote" style="margin-top:6px;"></div>
 
     <div class="form-row">
@@ -2159,7 +2240,7 @@
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
       <button class="btn ghost" onclick="closeCreditNote()">Cancel</button>
-      <button class="btn primary" onclick="saveCreditNote()">Issue Credit Note</button>
+      <button class="btn primary" id="cnSaveBtn" onclick="saveCreditNote()">Issue Credit Note</button>
     </div>
   </div>
 </div>
@@ -2468,6 +2549,7 @@ let selectedIds = new Set();
 let editingInvoiceId = null;
 let taxMode = 'exclusive';
 let magicMenuOpenId = null;
+let cnMagicMenuOpenId = null;
 
 const STATE_CODES = {
   '01':'Jammu & Kashmir','02':'Himachal Pradesh','03':'Punjab','04':'Chandigarh','05':'Uttarakhand',
@@ -2531,42 +2613,42 @@ const INVOICE_THEMES = {
   services: {
     label: 'Services — Modern Minimal',
     font: "'Inter', sans-serif", headFont: "'Inter', sans-serif",
-    primary: '#0F172A', accent: '#0EA5A4', bg: '#FFFFFF', line: '#E2E8F0', watermark: 'rgba(15,23,42,0.05)'
+    primary: '#0F172A', accent: '#0EA5A4', bg: '#FFFFFF', line: '#E2E8F0', watermark: 'rgba(15,23,42,0.11)'
   },
   retail: {
     label: 'Retail — Bold & Friendly',
     font: "'Source Sans 3', sans-serif", headFont: "'Fraunces', serif",
-    primary: '#7A2E2E', accent: '#E07A3F', bg: '#FFFCF5', line: '#EAD9C7', watermark: 'rgba(122,46,46,0.06)'
+    primary: '#7A2E2E', accent: '#E07A3F', bg: '#FFFCF5', line: '#EAD9C7', watermark: 'rgba(122,46,46,0.12)'
   },
   trade: {
     label: 'Trade & Wholesale — Ledger Classic',
     font: "'Source Sans 3', sans-serif", headFont: "'Fraunces', serif",
-    primary: '#20283B', accent: '#9C7A3C', bg: '#FFFCF5', line: '#DCD2AE', watermark: 'rgba(32,40,59,0.05)'
+    primary: '#20283B', accent: '#9C7A3C', bg: '#FFFCF5', line: '#DCD2AE', watermark: 'rgba(32,40,59,0.11)'
   },
   manufacturing: {
     label: 'Manufacturing — Industrial',
     font: "'Inter', sans-serif", headFont: "'Inter', sans-serif",
-    primary: '#263238', accent: '#3E6B8A', bg: '#F4F6F7', line: '#CFD8DC', watermark: 'rgba(38,50,56,0.05)'
+    primary: '#263238', accent: '#3E6B8A', bg: '#F4F6F7', line: '#CFD8DC', watermark: 'rgba(38,50,56,0.11)'
   },
   consultants: {
     label: 'Consultants — Elegant Premium',
     font: "'Playfair Display', serif", headFont: "'Playfair Display', serif",
-    primary: '#111111', accent: '#B08D57', bg: '#FFFFFF', line: '#E5E0D8', watermark: 'rgba(0,0,0,0.04)'
+    primary: '#111111', accent: '#B08D57', bg: '#FFFFFF', line: '#E5E0D8', watermark: 'rgba(0,0,0,0.10)'
   },
   geometric: {
     label: 'Modern Geometric — Color Block',
     font: "'Inter', sans-serif", headFont: "'Inter', sans-serif",
-    primary: '#182432', accent: '#E0546B', bg: '#FFFFFF', line: '#E7E9ED', watermark: 'rgba(24,36,50,0.045)'
+    primary: '#182432', accent: '#E0546B', bg: '#FFFFFF', line: '#E7E9ED', watermark: 'rgba(24,36,50,0.11)'
   },
   wave: {
     label: 'Bold Wave — Statement Black',
     font: "'Inter', sans-serif", headFont: "'Inter', sans-serif",
-    primary: '#141414', accent: '#6B6B6B', bg: '#FFFFFF', line: '#E4E4E4', watermark: 'rgba(20,20,20,0.05)'
+    primary: '#141414', accent: '#6B6B6B', bg: '#FFFFFF', line: '#E4E4E4', watermark: 'rgba(20,20,20,0.11)'
   },
   script: {
     label: 'Cursive Elegance — Cream Formal',
     font: "'Source Sans 3', sans-serif", headFont: "'Playfair Display', serif",
-    primary: '#2B211A', accent: '#B08D57', bg: '#FBF6EC', line: '#E6D9BE', watermark: 'rgba(43,33,26,0.045)'
+    primary: '#2B211A', accent: '#B08D57', bg: '#FBF6EC', line: '#E6D9BE', watermark: 'rgba(43,33,26,0.11)'
   }
 };
 function populateThemeSelect(el, selected){
@@ -3011,10 +3093,66 @@ function populateCnInvoiceSelect(){
     invoices.filter(v=>v.status!=='closed').map(v=>`<option value="${v.id}">${v.inv} — ${v.buyer} (₹${(v.taxable+v.gst).toLocaleString('en-IN')})</option>`).join('');
 }
 
+// Credit notes are almost always issued against a specific customer's specific invoice, so the
+// flow now mirrors that real-world order: pick the customer first, then only THAT customer's
+// issued invoices are offered — instead of one long flat list of every invoice from every buyer
+// that the person has to scan through to find the right one.
+function getCnCustomerList(){
+  const map = {};
+  invoices.filter(v=>v.status!=='closed').forEach(v=>{
+    const key = v.buyer + '|' + (v.buyerGstin||'');
+    if(!map[key]) map[key] = {buyer:v.buyer, gstin:v.buyerGstin||'', count:0};
+    map[key].count++;
+  });
+  return Object.values(map).sort((a,b)=>a.buyer.localeCompare(b.buyer));
+}
+
+function populateCnCustomerSelect(){
+  const sel = document.getElementById('cnCustomerSelect');
+  if(!sel) return;
+  const list = getCnCustomerList();
+  window._cnCustomerList = list;
+  if(!list.length){
+    sel.innerHTML = '<option value="">— No issued invoices yet —</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">— Select customer —</option>' +
+    list.map((c,i)=>`<option value="${i}">${c.buyer}${c.gstin?(' — '+c.gstin):''} · ${c.count} invoice${c.count===1?'':'s'}</option>`).join('');
+}
+
+function onCnCustomerChange(){
+  const idx = document.getElementById('cnCustomerSelect').value;
+  const invSel = document.getElementById('cnInvoiceSelect');
+  const note = document.getElementById('cnLinkedNote');
+  const list = window._cnCustomerList || [];
+  if(idx===''){
+    invSel.innerHTML = '<option value="">— Select a customer first —</option>';
+    invSel.disabled = true;
+    note.textContent = '';
+    updateCnTotals();
+    return;
+  }
+  const c = list[parseInt(idx)];
+  if(!c) return;
+  const custInvoices = invoices.filter(v=>v.status!=='closed' && v.buyer===c.buyer && (v.buyerGstin||'')===c.gstin);
+  invSel.disabled = false;
+  invSel.innerHTML = custInvoices.map(v=>`<option value="${v.id}">${v.inv} — ${v.invDate||'—'} (₹${(v.taxable+v.gst).toLocaleString('en-IN')})</option>`).join('');
+  if(custInvoices.length) invSel.value = custInvoices[0].id;
+  onCnInvoiceChange();
+}
+
+window._editingCreditNoteId = null;
+
 function openCreditNote(){
+  window._editingCreditNoteId = null;
+  document.getElementById('cnModalTitle').textContent = 'New Credit Note';
+  document.getElementById('cnSaveBtn').textContent = 'Issue Credit Note';
   document.getElementById('cnBackdrop').classList.add('show');
-  populateCnInvoiceSelect();
-  document.getElementById('cnInvoiceSelect').value = '';
+  populateCnCustomerSelect();
+  document.getElementById('cnCustomerSelect').value = '';
+  document.getElementById('cnCustomerSelect').disabled = false;
+  document.getElementById('cnInvoiceSelect').innerHTML = '<option value="">— Select a customer first —</option>';
+  document.getElementById('cnInvoiceSelect').disabled = true;
   document.getElementById('cnReason').value = 'sales_return';
   document.getElementById('cnTaxable').value = '';
   document.getElementById('cnGstPct').value = '18';
@@ -3028,7 +3166,53 @@ function openCreditNote(){
   document.getElementById('cnLinkedNote').textContent = '';
   updateCnTotals();
 }
-function closeCreditNote(){ document.getElementById('cnBackdrop').classList.remove('show'); }
+
+// Re-opens the same modal pre-filled against the credit note's original customer + invoice,
+// mirroring how editInvoice() reuses the New Sales Voucher modal for edits.
+function openEditCreditNote(id){
+  const cn = creditNotes.find(c=>c.id===id);
+  if(!cn) return;
+  window._editingCreditNoteId = id;
+  document.getElementById('cnModalTitle').textContent = `Edit ${cn.cnNo}`;
+  document.getElementById('cnSaveBtn').textContent = 'Save changes';
+  document.getElementById('cnBackdrop').classList.add('show');
+
+  populateCnCustomerSelect();
+  const list = window._cnCustomerList || [];
+  const custIdx = list.findIndex(c=>c.buyer===cn.buyer && c.gstin===(cn.buyerGstin||''));
+  const custSelect = document.getElementById('cnCustomerSelect');
+  if(custIdx>-1){
+    custSelect.value = String(custIdx);
+    custSelect.disabled = false;
+    onCnCustomerChange();
+    document.getElementById('cnInvoiceSelect').value = cn.linkedInvoiceId || '';
+    onCnInvoiceChange();
+  } else {
+    // The original customer no longer has any open invoices (or this old note predates the
+    // customer-first flow) — still show their info so nothing looks blank, just without the
+    // ability to re-pick a different invoice for them.
+    custSelect.innerHTML = `<option value="0" selected>${cn.buyer}${cn.buyerGstin?(' — '+cn.buyerGstin):''}</option>`;
+    custSelect.disabled = true;
+    document.getElementById('cnInvoiceSelect').innerHTML = `<option value="${cn.linkedInvoiceId||''}" selected>${cn.invNo}</option>`;
+    document.getElementById('cnInvoiceSelect').disabled = true;
+  }
+  document.getElementById('cnReason').value = cn.reason || 'sales_return';
+  document.getElementById('cnDate').value = cn.cnDate || new Date().toISOString().slice(0,10);
+  document.getElementById('cnNoField').value = cn.cnNo;
+  document.getElementById('cnGstPct').value = cn.taxable ? Math.round((cn.gst/cn.taxable)*100) : 18;
+  document.getElementById('cnTaxable').value = cn.taxable;
+  document.getElementById('cnDateWarning').style.display = 'none';
+  const periodSel = document.getElementById('cnPeriod');
+  const labels = getLastNMonthsLabels(12);
+  periodSel.innerHTML = labels.map(l=>`<option value="${l}">${l}</option>`).join('');
+  periodSel.value = labels.includes(cn.period) ? cn.period : labels[labels.length-1];
+  updateCnTotals();
+}
+
+function closeCreditNote(){
+  document.getElementById('cnBackdrop').classList.remove('show');
+  window._editingCreditNoteId = null;
+}
 
 function onCnInvoiceChange(){
   const id = document.getElementById('cnInvoiceSelect').value;
@@ -3064,17 +3248,48 @@ function updateCnTotals(){
 }
 
 function saveCreditNote(){
+  const isEdit = !!window._editingCreditNoteId;
+  const customerIdx = document.getElementById('cnCustomerSelect').value;
+  if(!isEdit && customerIdx===''){ showToast('Select the customer this credit note is for.'); return; }
+  const id = document.getElementById('cnInvoiceSelect').value;
+  if(!isEdit && !id){ showToast('Select which of this customer\'s invoices the credit note is against.'); return; }
   const taxable = parseFloat(document.getElementById('cnTaxable').value)||0;
   if(taxable<=0){ showToast('Enter a taxable value for this credit note.'); return; }
-  const id = document.getElementById('cnInvoiceSelect').value;
   const inv = invoices.find(v=>v.id===id);
   const t = window._cnPending || {gst:0,igst:0,cgst:0,sgst:0,isInterState:false};
   const cnNoRaw = document.getElementById('cnNoField').value.trim();
   const finalCnNo = cnNoRaw || ('CN-'+(creditNoteSeq+1));
-  if(creditNotes.some(c=>c.cnNo===finalCnNo)){
+  if(creditNotes.some(c=>c.cnNo===finalCnNo && c.id!==window._editingCreditNoteId)){
     showToast(`Credit note number ${finalCnNo} already exists — choose a different number.`);
     return;
   }
+
+  if(isEdit){
+    const existing = creditNotes.find(c=>c.id===window._editingCreditNoteId);
+    if(!existing){ showToast('This credit note no longer exists.'); closeCreditNote(); return; }
+    Object.assign(existing, {
+      cnNo: finalCnNo,
+      cnDate: document.getElementById('cnDate').value,
+      period: document.getElementById('cnPeriod').value,
+      linkedInvoiceId: id||existing.linkedInvoiceId||null,
+      invNo: inv ? inv.inv : existing.invNo,
+      buyer: inv ? inv.buyer : existing.buyer,
+      buyerGstin: inv ? inv.buyerGstin : existing.buyerGstin,
+      type: inv ? inv.type : existing.type,
+      typeLabel: inv ? inv.typeLabel : existing.typeLabel,
+      reason: document.getElementById('cnReason').value,
+      taxable, gst: t.gst, igst: t.igst, cgst: t.cgst, sgst: t.sgst,
+      isInterState: t.isInterState
+    });
+    persistCreditNotes();
+    renderCreditNotesTable();
+    renderSalesReport();
+    renderPartywiseReport();
+    closeCreditNote();
+    showToast(`Credit note ${existing.cnNo} updated.`);
+    return;
+  }
+
   creditNoteSeq++;
   const cn = {
     id: finalCnNo, cnNo: finalCnNo,
@@ -3099,6 +3314,8 @@ function saveCreditNote(){
 function deleteCreditNote(id){
   const idx = creditNotes.findIndex(c=>c.id===id);
   if(idx>-1) creditNotes.splice(idx,1);
+  if(cnMagicMenuOpenId===id) cnMagicMenuOpenId = null;
+  if(window._editingCreditNoteId===id) window._editingCreditNoteId = null;
   persistCreditNotes();
   renderCreditNotesTable();
   renderSalesReport();
@@ -3106,10 +3323,104 @@ function deleteCreditNote(id){
   showToast('Credit note removed.');
 }
 
+// Simple, single-layout printable credit note — deliberately not theme-able like invoices
+// (a credit note is an internal correction document, not a branded customer-facing sale), but
+// still gets the print-color-adjust fix from day one so its colored totals row actually prints.
+function previewCreditNote(id){
+  const cn = creditNotes.find(c=>c.id===id);
+  if(!cn) return;
+  const supplierName = profile ? profile.name : 'Your Business';
+  const supplierGstin = profile ? profile.gstin : '—';
+  const sAddr = (profile && profile.address) ? profile.address : {};
+  const supplierAddress = [sAddr.line1, sAddr.line2, sAddr.city, sAddr.pincode].filter(Boolean).join(', ');
+  const grand = cn.taxable + cn.gst;
+  const originalInv = cn.linkedInvoiceId ? invoices.find(v=>v.id===cn.linkedInvoiceId) : null;
+
+  const win = window.open('', '_blank');
+  if(!win){ showToast('Pop-up blocked — allow pop-ups to view or print this credit note.'); return; }
+
+  win.document.write(`
+    <!DOCTYPE html><html><head><title>${cn.cnNo} — Credit Note — FingerTax</title>
+    <meta charset="UTF-8">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
+      html,body{margin:0;padding:0;}
+      body{font-family:'Source Sans 3',sans-serif;color:#20283B;background:#DCE0E6;min-height:100vh;}
+      .page{background:#FFFCF5;padding:44px 46px;max-width:720px;margin:32px auto;box-shadow:0 8px 30px rgba(20,25,40,0.16);border-radius:2px;}
+      .toolbar{max-width:720px;margin:0 auto 0 auto;padding:0 4px;display:flex;gap:8px;font-family:'Inter',sans-serif;}
+      .toolbar button{font-family:'Inter',sans-serif;font-weight:600;font-size:13px;padding:10px 18px;border-radius:4px;border:none;cursor:pointer;color:#fff;background:#20283B;box-shadow:0 1px 3px rgba(0,0,0,0.15);}
+      .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px double #20283B;padding-bottom:16px;}
+      .biz{font-family:'Fraunces',serif;font-size:22px;font-weight:700;}
+      .bizmeta{font-size:12px;color:#5a5648;margin-top:5px;line-height:1.6;max-width:280px;}
+      .doctag{font-family:'Fraunces',serif;font-size:13px;letter-spacing:3px;text-transform:uppercase;color:#9C7A3C;font-weight:700;text-align:right;}
+      .docno{font-family:'Fraunces',serif;font-size:20px;font-weight:700;text-align:right;margin-top:4px;}
+      .docmeta{font-size:11.5px;color:#5a5648;text-align:right;margin-top:6px;line-height:1.7;}
+      .parties{display:grid;grid-template-columns:1fr 1fr;border:1px solid #20283B;border-top:none;margin-top:18px;}
+      .parties .box{padding:13px 16px;border-right:1px solid #DCD2AE;}
+      .parties .box:last-child{border-right:none;}
+      .lbl{font-family:'Fraunces',serif;font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;color:#9C7A3C;font-weight:700;margin-bottom:5px;}
+      .name{font-weight:700;font-size:14px;margin-bottom:2px;}
+      .sub{font-size:12px;color:#5a5648;line-height:1.55;}
+      .reason-row{margin-top:18px;font-size:13px;}
+      .reason-row b{color:#20283B;}
+      table.doc-table{width:100%;border-collapse:collapse;margin-top:16px;border:1px solid #20283B;}
+      table.doc-table th{background:#20283B;color:#FFFCF5;padding:9px 10px;text-align:left;font-size:11px;letter-spacing:0.4px;text-transform:uppercase;font-weight:600;}
+      table.doc-table th.num, table.doc-table td.num{text-align:right;}
+      table.doc-table td{padding:9px 10px;font-size:13px;border-bottom:1px solid #DCD2AE;}
+      .grand-row td{font-weight:700;background:rgba(156,122,60,0.12);}
+      .words-row{margin-top:16px;font-size:12px;font-style:italic;color:#20283B;}
+      .sig-block{margin-top:50px;display:flex;justify-content:flex-end;}
+      .signatory{text-align:center;min-width:200px;}
+      .sig-space{height:50px;}
+      .sig-line{border-top:1px solid #20283B;margin-bottom:6px;}
+      .sig-label{font-size:12.5px;font-weight:600;}
+      .sig-company{font-size:11.5px;color:#9C7A3C;margin-top:2px;}
+      .cgen-note{margin-top:34px;text-align:center;font-size:11px;font-style:italic;color:#8A8578;border-top:1px dashed #DCD2AE;padding-top:12px;}
+      @media print{ .toolbar{display:none;} body{background:#fff;} .page{box-shadow:none;margin:0 auto;} }
+    </style>
+    </head><body>
+      <div class="toolbar" style="margin-bottom:16px;">
+        <button onclick="window.print()">🖶 Print / Save as PDF</button>
+      </div>
+      <div class="page">
+        <div class="top">
+          <div><div class="biz">${supplierName}</div><div class="bizmeta">${supplierAddress ? supplierAddress+'<br>' : ''}GSTIN ${supplierGstin}</div></div>
+          <div><div class="doctag">Credit Note</div><div class="docno">${cn.cnNo}</div>
+            <div class="docmeta">Date ${cn.cnDate||'—'}${cn.period ? '<br>Return period '+cn.period : ''}</div>
+          </div>
+        </div>
+        <div class="parties">
+          <div class="box"><div class="lbl">Issued to</div><div class="name">${cn.buyer}</div><div class="sub">GSTIN ${cn.buyerGstin||'—'}</div></div>
+          <div class="box"><div class="lbl">Against original invoice</div><div class="name">${cn.invNo}</div><div class="sub">${originalInv && originalInv.invDate ? 'Dated '+originalInv.invDate : ''}</div></div>
+        </div>
+        <div class="reason-row"><b>Reason:</b> ${CN_REASON_LABELS[cn.reason]||cn.reason}</div>
+        <table class="doc-table">
+          <tr><th>Particulars</th><th class="num">Amount</th></tr>
+          <tr><td>Taxable value (reduced)</td><td class="num">₹${cn.taxable.toLocaleString('en-IN',{maximumFractionDigits:2})}</td></tr>
+          ${cn.isInterState
+            ? `<tr><td>IGST</td><td class="num">₹${cn.igst.toLocaleString('en-IN',{maximumFractionDigits:2})}</td></tr>`
+            : `<tr><td>CGST</td><td class="num">₹${cn.cgst.toLocaleString('en-IN',{maximumFractionDigits:2})}</td></tr><tr><td>SGST</td><td class="num">₹${cn.sgst.toLocaleString('en-IN',{maximumFractionDigits:2})}</td></tr>`}
+          <tr class="grand-row"><td>Total credit note value</td><td class="num">₹${grand.toLocaleString('en-IN',{maximumFractionDigits:2})}</td></tr>
+        </table>
+        <div class="words-row">${amountInWords(grand)}</div>
+        <div class="sig-block">
+          <div class="signatory"><div class="sig-space"></div><div class="sig-line"></div>
+            <div class="sig-label">Authorised Signatory</div>
+            <div class="sig-company">For ${supplierName}</div>
+          </div>
+        </div>
+        <div class="cgen-note">This is a computer generated credit note and hence does not require a signature.</div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+}
+
 function renderCreditNotesTable(){
   const table = document.getElementById('creditNoteTable');
   if(!table) return;
-  const header = `<tr><th>Note #</th><th>Date</th><th>Original Invoice</th><th>Buyer</th><th>Reason</th><th class="num">Taxable</th><th class="num">GST</th><th style="width:40px;"></th></tr>`;
+  const header = `<tr><th>Note #</th><th>Date</th><th>Original Invoice</th><th>Buyer</th><th>Reason</th><th class="num">Taxable</th><th class="num">GST</th><th style="width:60px;">Actions</th></tr>`;
   if(creditNotes.length===0){
     table.innerHTML = header + `<tr><td colspan="8" style="text-align:center;color:var(--grey);padding:18px;">No credit notes issued yet.</td></tr>`;
     return;
@@ -3119,10 +3430,28 @@ function renderCreditNotesTable(){
         <td>${cn.cnNo}</td><td>${cn.cnDate||'—'}</td><td>${cn.invNo}</td><td>${cn.buyer}</td>
         <td>${CN_REASON_LABELS[cn.reason]||cn.reason}</td>
         <td class="num">${cn.taxable.toLocaleString('en-IN')}</td><td class="num">${cn.gst.toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
-        <td><div class="row-actions"><button class="danger" onclick="deleteCreditNote('${cn.id}')" title="Delete">🗑</button></div></td>
+        <td>
+          <div class="row-menu-wrap">
+            <button class="magic-btn" title="Actions" onclick="toggleCnRowMenu(event,'${cn.id}')">✨</button>
+            <div class="row-menu ${cnMagicMenuOpenId===cn.id?'show':''}" id="cn-menu-${cn.id}">
+              <button onclick="previewCreditNote('${cn.id}')">🖶 View / Print</button>
+              <button onclick="openEditCreditNote('${cn.id}')">✎ Edit</button>
+              <button class="danger" onclick="deleteCreditNote('${cn.id}')">🗑 Delete</button>
+            </div>
+          </div>
+        </td>
       </tr>
     `).join('');
 }
+
+function toggleCnRowMenu(evt, id){
+  evt.stopPropagation();
+  cnMagicMenuOpenId = (cnMagicMenuOpenId===id) ? null : id;
+  renderCreditNotesTable();
+}
+document.addEventListener('click', ()=>{
+  if(cnMagicMenuOpenId){ cnMagicMenuOpenId = null; renderCreditNotesTable(); }
+});
 
 /* ================= PROFILE / ONBOARDING ================= */
 async function loadProfile(){
@@ -3454,6 +3783,15 @@ function closeTutorial(){
   document.getElementById('bizGstin').focus();
 }
 
+// One-click bypass for testing without Google/Firebase: reuses the exact same manual sign-up
+// path (saveProfile), just without requiring the person to type anything first. Google sign-in
+// is skipped entirely — it can be connected later from Profile once the app is on a real,
+// Firebase-authorized URL.
+function skipSignInForTesting(){
+  if(!document.getElementById('obName').value.trim()) document.getElementById('obName').value = 'Test Business';
+  saveProfile();
+}
+
 async function saveProfile(){
   // Lightweight sign-up only — just enough to enter the ledger. GSTIN,
   // address, scheme and filing frequency are collected next, in Profile &
@@ -3489,7 +3827,8 @@ async function mockGoogleSignIn(){
   const btn = document.getElementById('googleSignInBtn');
   const label = document.getElementById('googleBtnLabel');
   if(typeof window.fbSignInWithGoogle !== 'function'){
-    showToast('Google sign-in isn\'t ready yet — please refresh and try again.');
+    showToast('Google sign-in isn\'t ready yet — use manual sign-up below instead, it works right away.');
+    highlightManualSignup();
     return;
   }
   btn.disabled = true;
@@ -3498,7 +3837,16 @@ async function mockGoogleSignIn(){
   btn.disabled = false;
   if(!result.ok){
     label.textContent = 'Sign in with Google';
-    showToast(result.error || 'Google sign-in failed — please try again.');
+    const isSetupIssue = /isn't authorized yet|isn't enabled yet|isn\'t ready yet/i.test(result.error||'');
+    if(isSetupIssue){
+      // Google sign-in needs the domain (or the Firebase project) configured first — that's a
+      // one-time setup step, not something a person testing the app locally should be blocked on.
+      // Point them straight at the manual path below, which works everywhere with no setup at all.
+      showToast('Google sign-in needs a one-time domain setup in Firebase — use manual sign-up below instead, it works right away.');
+      highlightManualSignup();
+    } else {
+      showToast(result.error || 'Google sign-in failed — please try again.');
+    }
     return;
   }
   label.textContent = 'Signed in as ' + result.email;
@@ -3532,6 +3880,17 @@ async function mockGoogleSignIn(){
   document.getElementById('obEmail').value = result.email;
   if(!document.getElementById('obName').value.trim() && result.name) document.getElementById('obName').value = result.name;
   showToast('Signed in with Google.');
+}
+
+function highlightManualSignup(){
+  const block = document.getElementById('manualSignupBlock');
+  if(!block) return;
+  block.scrollIntoView({behavior:'smooth', block:'center'});
+  block.classList.remove('manual-signup-highlight');
+  void block.offsetWidth; // restart the animation if it's already been triggered once
+  block.classList.add('manual-signup-highlight');
+  const nameInput = document.getElementById('obName');
+  if(nameInput) setTimeout(()=>nameInput.focus(), 300);
 }
 
 function applyProfile(){
@@ -3657,6 +4016,7 @@ function switchTab(panelId){
   if(panelId==='salesReport') renderSalesReport();
   if(panelId==='revenue') renderRevenue();
   if(panelId==='partywiseReport') renderPartywiseReport();
+  if(panelId==='customers') renderCustomersPanel();
   if(panelId==='wallet') renderTaxWallet();
   if(panelId==='profile') renderMembershipCard();
 }
@@ -4510,6 +4870,7 @@ function openVoucher(){
   document.getElementById('itemRows').innerHTML='';
   itemIdCounter=0;
   addItemRow();
+  populateVBuyerCustomerList();
   document.getElementById('vType').value='b2b';
   document.getElementById('vBuyer').value='';
   document.getElementById('vGstin').value='';
@@ -4541,6 +4902,7 @@ function editInvoice(id){
   document.getElementById('voucherModalTitle').textContent = `Edit ${inv.inv}`;
   document.getElementById('voucherSaveBtn').textContent = 'Update Invoice';
   document.getElementById('voucherBackdrop').classList.add('show');
+  populateVBuyerCustomerList();
 
   document.getElementById('vType').value = inv.type || 'b2b';
   document.getElementById('vBuyer').value = inv.buyer || '';
@@ -4582,6 +4944,29 @@ function editInvoice(id){
 }
 
 function closeVoucher(){ document.getElementById('voucherBackdrop').classList.remove('show'); editingInvoiceId = null; }
+
+// Lets "Buyer name" on the sales voucher suggest from the saved Customers list (via the
+// vBuyerCustomerList datalist) and, once the typed name exactly matches a saved customer,
+// fill in their GSTIN automatically — the whole point of maintaining customer profiles is not
+// having to retype their GSTIN on every single invoice.
+function populateVBuyerCustomerList(){
+  const dl = document.getElementById('vBuyerCustomerList');
+  if(!dl) return;
+  dl.innerHTML = customers.map(c=>`<option value="${String(c.name||'').replace(/"/g,'&quot;')}">`).join('');
+}
+function onVBuyerNameInput(){
+  const name = document.getElementById('vBuyer').value.trim();
+  if(!name) return;
+  const match = customers.find(c=>(c.name||'').trim().toLowerCase()===name.toLowerCase());
+  if(!match) return;
+  const gstinField = document.getElementById('vGstin');
+  // Only auto-fill when the GSTIN box is empty, so this never overwrites a GSTIN the person
+  // has already typed or deliberately cleared for this particular invoice.
+  if(match.gstin && !gstinField.value.trim()){
+    gstinField.value = match.gstin;
+    onVGstinInput();
+  }
+}
 
 function onVGstinInput(){
   const input = document.getElementById('vGstin');
@@ -4914,6 +5299,406 @@ function saveVoucher(){
     : `${typeLabels[type]} invoice ${finalInvNo} saved for ${buyer}.${receivedNow>0 ? ` ₹${receivedNow.toLocaleString('en-IN')} recorded as received.` : ''}`);
 }
 
+/* ================= SALES REGISTER IMPORT (Tally / Busy / generic Excel or CSV) =================
+   Lets a user who already books sales in Tally, Busy, Marg, etc. import that software's Sales
+   Register export and have FingerTax auto-create a matching voucher for every bill — instead of
+   re-typing invoices by hand. Column headers vary a lot between software and export settings, so
+   this auto-detects the header row + columns by alias matching, but always shows an editable
+   mapping + row-level preview before anything is written to the ledger. */
+const SALES_IMPORT_FIELDS = [
+  {key:'invNo', label:'Bill / Invoice No.', required:true, aliases:['bill no','invoice no','invoice number','voucher no','vch no','doc no','document no','bill number','ref no']},
+  {key:'date', label:'Date', required:true, aliases:['date','bill date','invoice date','vch date','voucher date']},
+  {key:'party', label:'Party / Customer name', required:true, aliases:['name & address of dealer','party name','party\'s name','particulars','customer name','ledger name','name of dealer','buyer name','trade/legal name','name']},
+  {key:'gstin', label:'GSTIN', required:false, aliases:['gstin','gstin/uin','gstin of recipient','party gstin','gstin no','gst no']},
+  {key:'posCol', label:'Place of Supply', required:false, aliases:['place of supply','place of supply(state code)','pos','pos code','pos(state code)']},
+  {key:'saleType', label:'Sale Type / Nature', required:false, aliases:['sale type','nature of transaction','voucher type','vch type','type of supply']},
+  {key:'billAmount', label:'Bill / Invoice amount (total)', required:false, aliases:['bill amount','invoice value','invoice amount','total amount','gross total','voucher total','net amount','amount']},
+  {key:'taxableValue', label:'Taxable value', required:false, aliases:['taxable value','taxable amt','taxable amount']},
+  {key:'igstTaxable', label:'IGST taxable amt', required:false, aliases:['igst txbl','igst taxable']},
+  {key:'igstAmt', label:'IGST amount', required:false, aliases:['igst tax amt','igst amount','integrated tax']},
+  {key:'cgstTaxable', label:'CGST taxable amt', required:false, aliases:['cgst txbl','cgst taxable']},
+  {key:'cgstAmt', label:'CGST amount', required:false, aliases:['cgst tax amt','cgst amount','central tax']},
+  {key:'sgstTaxable', label:'SGST taxable amt', required:false, aliases:['sgst txbl','sgst taxable']},
+  {key:'sgstAmt', label:'SGST amount', required:false, aliases:['sgst tax amt','sgst amount','state tax','ut tax','state/ut tax']},
+  {key:'hsn', label:'HSN / SAC', required:false, aliases:['hsn','hsn/sac','hsn code','sac']}
+];
+
+function normSalesImportHeaderCell(v){
+  return String(v==null?'':v).trim().toLowerCase().replace(/\s+/g,' ').replace(/[.]/g,'');
+}
+
+// Scans the first ~30 rows of the sheet for the row that looks most like a header row
+// (i.e. matches the most field aliases, and covers all three required fields).
+function detectSalesImportColumns(rows){
+  const maxScan = Math.min(rows.length, 30);
+  let best = null;
+  for(let r=0;r<maxScan;r++){
+    const row = rows[r]||[];
+    if(row.length<3) continue;
+    const norm = row.map(normSalesImportHeaderCell);
+    const used = new Set();
+    const colMap = {};
+    SALES_IMPORT_FIELDS.forEach(f=>{
+      let foundIdx = -1;
+      for(let c=0;c<norm.length;c++){ if(!used.has(c) && f.aliases.includes(norm[c])){ foundIdx=c; break; } }
+      if(foundIdx===-1){
+        for(let c=0;c<norm.length;c++){ if(!used.has(c) && norm[c] && f.aliases.some(a=>norm[c].includes(a))){ foundIdx=c; break; } }
+      }
+      if(foundIdx>-1){ colMap[f.key]=foundIdx; used.add(foundIdx); }
+    });
+    const requiredHit = SALES_IMPORT_FIELDS.filter(f=>f.required).every(f=>colMap[f.key]!=null);
+    const hitCount = Object.keys(colMap).length;
+    if(requiredHit && (!best || hitCount>best.hitCount)) best = {headerIdx:r, colMap, hitCount};
+  }
+  return best;
+}
+
+function parseSalesImportDate(raw){
+  if(raw==null || raw==='') return null;
+  const s = String(raw).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})[- ]([A-Za-z]{3,})[- ](\d{2,4})$/);
+  if(m){
+    const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+    const mm = months[m[2].slice(0,3).toLowerCase()];
+    let yr = m[3]; if(yr.length===2) yr = (parseInt(yr)>50 ? '19' : '20')+yr;
+    if(mm) return `${yr}-${mm}-${m[1].padStart(2,'0')}`;
+  }
+  if(/^\d+(\.\d+)?$/.test(s)){
+    const serial = parseFloat(s);
+    if(serial>20000 && serial<80000){
+      const d = new Date(Date.UTC(1899,11,30) + serial*86400000);
+      if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+  }
+  const d = new Date(s);
+  if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+  return null;
+}
+
+function guessStateCodeFromText(text){
+  if(!text) return null;
+  const t = String(text).toUpperCase();
+  for(const [code,name] of Object.entries(STATE_CODES)){
+    if(t.includes(name.toUpperCase())) return code;
+  }
+  return null;
+}
+
+// Handles an explicit "Place of Supply" column, which many Tally/GST-portal-style exports
+// include as e.g. "27-Maharashtra", "27", or just "Maharashtra".
+function parsePlaceOfSupplyText(text){
+  if(!text) return null;
+  const t = String(text).trim();
+  const m = t.match(/^(\d{2})\b/);
+  if(m && STATE_CODES[m[1]]) return m[1];
+  return guessStateCodeFromText(t);
+}
+
+// Reads hints like "L/GST-18%" (local) or "I/GST-18%" (inter-state), or "Interstate"/"Local", off
+// a free-text Sale Type / Nature of Transaction column.
+function parseSalesImportSaleType(text){
+  const t = String(text||'').trim();
+  const upper = t.toUpperCase();
+  let interstate = null;
+  if(/^I[\/\-]|INTER[- ]?STATE/.test(upper)) interstate = true;
+  else if(/^L[\/\-]|LOCAL|INTRA[- ]?STATE/.test(upper)) interstate = false;
+  const rateMatch = t.match(/([\d.]+)\s*%/);
+  return { interstate, rate: rateMatch ? parseFloat(rateMatch[1]) : null };
+}
+
+function computeSalesImportRow(rawRow, colMap){
+  const g = key => colMap[key]!=null ? rawRow[colMap[key]] : '';
+  const num = v => { const n = parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+
+  const invNo = String(g('invNo')||'').trim();
+  const dateRaw = g('date');
+  const dateIso = parseSalesImportDate(dateRaw);
+  const party = String(g('party')||'').trim();
+  const gstinRaw = String(g('gstin')||'').trim().toUpperCase();
+  const saleTypeText = String(g('saleType')||'').trim();
+  const hints = parseSalesImportSaleType(saleTypeText);
+
+  const igstTaxable = num(g('igstTaxable')), igstAmt = num(g('igstAmt'));
+  const cgstTaxable = num(g('cgstTaxable')), cgstAmt = num(g('cgstAmt'));
+  const sgstTaxable = num(g('sgstTaxable')), sgstAmt = num(g('sgstAmt'));
+  const taxableCol = num(g('taxableValue'));
+  const billAmount = num(g('billAmount'));
+
+  const warnings = [];
+  let taxable=0, gst=0, isInterState=null, rate=0;
+  const hasSplit = !!(igstTaxable||igstAmt||cgstTaxable||cgstAmt||sgstTaxable||sgstAmt);
+
+  if(hasSplit){
+    // CGST-taxable and SGST-taxable columns repeat the SAME taxable base under each tax head
+    // (that's how local-sale registers show it) — so this must not be summed, just picked once.
+    taxable = igstTaxable || cgstTaxable || sgstTaxable || taxableCol;
+    gst = igstAmt + cgstAmt + sgstAmt;
+    isInterState = igstAmt>0 && !(cgstAmt||sgstAmt) ? true : ((cgstAmt||sgstAmt) ? false : null);
+  } else if(taxableCol){
+    taxable = taxableCol;
+    gst = billAmount>taxableCol ? billAmount-taxableCol : 0;
+  } else if(billAmount){
+    if(hints.rate!=null){
+      rate = hints.rate;
+      taxable = billAmount/(1+rate/100);
+      gst = billAmount-taxable;
+    } else {
+      taxable = billAmount; gst = 0;
+      warnings.push('No tax columns matched — imported at zero tax; please review.');
+    }
+  }
+  if(taxable>0 && rate===0) rate = Math.round((gst/taxable)*100);
+  if(isInterState===null) isInterState = !!hints.interstate;
+
+  const gstinIssue = gstinRaw ? gstinValidityIssue(gstinRaw) : null;
+  const gstinOk = !!gstinRaw && !gstinIssue;
+  if(gstinRaw && gstinIssue) warnings.push('GSTIN '+gstinIssue.toLowerCase()+' — treated as B2C.');
+
+  let placeOfSupply = null;
+  const posColText = String(g('posCol')||'').trim();
+  if(posColText) placeOfSupply = parsePlaceOfSupplyText(posColText);
+  if(!placeOfSupply && gstinOk) placeOfSupply = gstinRaw.slice(0,2);
+  if(!placeOfSupply){
+    placeOfSupply = guessStateCodeFromText(party);
+    if(!placeOfSupply && profile && profile.stateCode){
+      placeOfSupply = profile.stateCode;
+      if(isInterState) warnings.push('Could not determine place of supply — defaulted to your own state; please verify.');
+    }
+  }
+  if(!placeOfSupply) placeOfSupply = (profile && profile.stateCode) || '07';
+
+  let errorMsg = null;
+  if(!invNo) errorMsg = 'Missing Bill/Invoice No.';
+  else if(!dateIso) errorMsg = 'Could not read the date.';
+  else if(!party) errorMsg = 'Missing party/customer name.';
+  else if(!(taxable>0)) errorMsg = 'No amount found on this row.';
+
+  return {
+    invNo, dateIso, dateRaw: String(dateRaw||''), party,
+    gstin: gstinOk ? gstinRaw : '', saleTypeText,
+    taxable: Math.round(taxable*100)/100, gst: Math.round(gst*100)/100, rate,
+    isInterState: !!isInterState, placeOfSupply, type: gstinOk ? 'b2b' : 'b2c',
+    warnings, errorMsg
+  };
+}
+
+function handleSalesImportFileSelect(evt){
+  const file = evt.target.files && evt.target.files[0];
+  evt.target.value = '';
+  if(!file) return;
+  const isCsv = /\.csv$/i.test(file.name);
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+  if(!isCsv && !isExcel){ showToast('Please upload a Tally/Busy sales register as .xlsx, .xls or .csv.'); return; }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      let rows, sheetName='';
+      if(isCsv){
+        rows = parseImsCsvText(e.target.result);
+      } else {
+        if(typeof XLSX === 'undefined'){ showToast('Excel library failed to load — please try again.'); return; }
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        sheetName = wb.SheetNames.find(sn=>{
+          const r = XLSX.utils.sheet_to_json(wb.Sheets[sn], {header:1, defval:'', raw:false});
+          return r && r.length>1;
+        }) || wb.SheetNames[0];
+        rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, defval:'', raw:false});
+      }
+      if(!rows || rows.length<2){ showToast('This file looks empty — please check and try again.'); return; }
+      openSalesImportModal(rows, file.name, sheetName);
+    }catch(err){
+      showToast('Could not read this file — please check it is a valid sales register export.');
+    }
+  };
+  if(isCsv) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+
+function openSalesImportModal(rows, fileName, sheetName){
+  const detected = detectSalesImportColumns(rows);
+  window._salesImportState = { rows, fileName, sheetName, headerIdx: detected ? detected.headerIdx : 0, colMap: detected ? detected.colMap : {} };
+  document.getElementById('salesImportFileName').textContent = fileName;
+  document.getElementById('salesImportSheetInfo').textContent = (sheetName ? `Sheet: ${sheetName} · ` : '') + `${rows.length} rows read`;
+  document.getElementById('salesImportFileMeta').style.display = 'block';
+  document.getElementById('salesImportMappingBox').style.display = 'block';
+  buildSalesImportMappingUI();
+  if(!detected) showToast('Could not auto-detect the header row — please map the columns below.');
+  reparseSalesImport();
+  document.getElementById('salesImportBackdrop').classList.add('show');
+}
+
+function buildSalesImportMappingUI(){
+  const st = window._salesImportState;
+  if(!st) return;
+  const headerRow = st.rows[st.headerIdx] || [];
+  const options = headerRow.map((c,i)=>({idx:i, label:(String(c||'').trim() || `Column ${i+1}`)}));
+  let html = `<div style="grid-column:1/-1;"><label class="field">Header row <span style="text-transform:none;font-weight:400;color:var(--grey);">(the row containing column titles)</span></label>
+    <input type="number" id="siHeaderRowInput" min="1" value="${st.headerIdx+1}" style="width:100px;" onchange="onSalesImportHeaderRowChange()"></div>`;
+  html += SALES_IMPORT_FIELDS.map(f=>{
+    const sel = st.colMap[f.key];
+    const opts = `<option value="">— not present —</option>` + options.map(o=>`<option value="${o.idx}" ${sel===o.idx?'selected':''}>${o.label}</option>`).join('');
+    return `<div><label class="field">${f.label}${f.required?' <span style="text-transform:none;font-weight:700;color:var(--oxblood);">(required)</span>':''}</label>
+      <select id="siMap_${f.key}" style="width:100%;" onchange="onSalesImportMapChange('${f.key}')">${opts}</select></div>`;
+  }).join('');
+  document.getElementById('salesImportMappingGrid').innerHTML = html;
+}
+function onSalesImportHeaderRowChange(){
+  const st = window._salesImportState; if(!st) return;
+  st.headerIdx = Math.max(0, (parseInt(document.getElementById('siHeaderRowInput').value)||1) - 1);
+  buildSalesImportMappingUI();
+  reparseSalesImport();
+}
+function onSalesImportMapChange(key){
+  const st = window._salesImportState; if(!st) return;
+  const v = document.getElementById('siMap_'+key).value;
+  st.colMap[key] = v==='' ? null : parseInt(v);
+  reparseSalesImport();
+}
+
+function reparseSalesImport(){
+  const st = window._salesImportState;
+  if(!st) return;
+  const parsed = [];
+  for(let i=st.headerIdx+1;i<st.rows.length;i++){
+    const row = st.rows[i];
+    if(!row || row.every(c=>String(c==null?'':c).trim()==='')) continue;
+    const invNoCell = st.colMap.invNo!=null ? String(row[st.colMap.invNo]||'').trim() : '';
+    const partyCell = st.colMap.party!=null ? String(row[st.colMap.party]||'').trim() : '';
+    if(!invNoCell && !partyCell) continue; // likely a totals/footer/blank row
+    const r = computeSalesImportRow(row, st.colMap);
+    r.include = true;
+    r.duplicate = invoices.some(v=>String(v.inv||'').trim().toLowerCase()===r.invNo.trim().toLowerCase());
+    parsed.push(r);
+  }
+  st.parsedRows = parsed;
+  renderSalesImportPreview();
+}
+
+function salesImportRowStatus(r, overwrite){
+  if(r.errorMsg) return {cls:'missing', label:'Skipped'};
+  if(r.duplicate) return overwrite ? {cls:'partial', label:'Duplicate — will overwrite'} : {cls:'partial', label:'Duplicate — skipped'};
+  if(r.warnings.length) return {cls:'partial', label:'Needs review'};
+  return {cls:'matched', label:'Ready'};
+}
+
+function renderSalesImportPreview(){
+  const st = window._salesImportState;
+  const box = document.getElementById('salesImportSummaryBox');
+  if(!st || !st.parsedRows){ box.style.display='none'; return; }
+  box.style.display = 'block';
+  const overwrite = document.getElementById('siOverwriteDup').checked;
+  const rows = st.parsedRows;
+  const errorRows = rows.filter(r=>r.errorMsg);
+  const dupRows = rows.filter(r=>!r.errorMsg && r.duplicate);
+  const willImport = rows.filter(r=>!r.errorMsg && r.include && (!r.duplicate || overwrite));
+
+  document.getElementById('siStatFound').textContent = rows.length;
+  document.getElementById('siStatValid').textContent = willImport.length;
+  document.getElementById('siStatDup').textContent = dupRows.length;
+  document.getElementById('siStatError').textContent = errorRows.length;
+
+  const table = document.getElementById('salesImportTable');
+  table.innerHTML = `<tr>
+      <th style="width:26px;"><input type="checkbox" onchange="siToggleAll(this.checked)" ${rows.length && rows.every(r=>r.include||r.errorMsg)?'checked':''}></th>
+      <th>Bill/Inv #</th><th>Date</th><th>Party</th><th>GSTIN</th><th>Type</th>
+      <th class="num">Taxable</th><th class="num">GST</th><th class="num">Rate</th><th>Status</th>
+    </tr>` + rows.map((r,i)=>{
+      const s = salesImportRowStatus(r, overwrite);
+      const dateCell = r.dateIso ? r.dateIso : `<span style="color:var(--oxblood);">${r.dateRaw||'—'}</span>`;
+      return `<tr>
+        <td><input type="checkbox" ${r.include?'checked':''} ${r.errorMsg?'disabled':''} onchange="siToggleRow(${i},this.checked)"></td>
+        <td>${r.invNo||'—'}</td>
+        <td>${dateCell}</td>
+        <td>${r.party||'—'}</td>
+        <td>${r.gstin || '<span style="color:var(--grey);">B2C</span>'}</td>
+        <td>${r.isInterState?'Inter-state':'Intra-state'}</td>
+        <td class="num">${r.taxable.toLocaleString('en-IN')}</td>
+        <td class="num">${r.gst.toLocaleString('en-IN')}</td>
+        <td class="num">${r.rate}%</td>
+        <td><span class="badge ${s.cls}" title="${(r.errorMsg||r.warnings.join(' ')||'').replace(/"/g,'&quot;')}">${s.label}</span></td>
+      </tr>`;
+    }).join('');
+
+  document.getElementById('salesImportFootnote').textContent =
+    `Rows read from row ${st.headerIdx+2} onward.` +
+    (errorRows.length ? ` ${errorRows.length} row(s) skipped (missing bill no., date or amount).` : '') +
+    (dupRows.length ? ` ${dupRows.length} bill number(s) already exist on your ledger.` : '');
+
+  const btn = document.getElementById('salesImportConfirmBtn');
+  btn.textContent = `Import ${willImport.length} invoice${willImport.length===1?'':'s'}`;
+  btn.disabled = willImport.length===0;
+}
+function siToggleAll(checked){
+  window._salesImportState.parsedRows.forEach(r=>{ if(!r.errorMsg) r.include = checked; });
+  renderSalesImportPreview();
+}
+function siToggleRow(i, checked){
+  window._salesImportState.parsedRows[i].include = checked;
+  renderSalesImportPreview();
+}
+
+function closeSalesImportModal(){
+  document.getElementById('salesImportBackdrop').classList.remove('show');
+  window._salesImportState = null;
+  document.getElementById('salesImportFileMeta').style.display = 'none';
+  document.getElementById('salesImportMappingBox').style.display = 'none';
+  document.getElementById('salesImportSummaryBox').style.display = 'none';
+  document.getElementById('siOverwriteDup').checked = false;
+}
+
+function computeEwbForImportedSale(taxableTotal, isInterState){
+  const supplierCode = profile ? profile.stateCode : null;
+  const isFromDelhi = supplierCode === '07';
+  const threshold = isFromDelhi ? 100000 : 50000;
+  return { required: isInterState && taxableTotal > threshold, threshold };
+}
+
+async function confirmSalesImport(){
+  const st = window._salesImportState;
+  if(!st || !st.parsedRows) return;
+  const overwrite = document.getElementById('siOverwriteDup').checked;
+  const typeLabels = {b2b:'B2B', b2c:'B2C'};
+  let created=0, updated=0, skipped=0;
+  const affected = [];
+
+  st.parsedRows.forEach(r=>{
+    if(r.errorMsg || !r.include){ skipped++; return; }
+    if(r.duplicate && !overwrite){ skipped++; return; }
+
+    const gst = r.gst, isInterState = r.isInterState;
+    const ewb = computeEwbForImportedSale(r.taxable, isInterState);
+    const payload = {
+      inv: r.invNo, invDate: r.dateIso, buyer: r.party || 'Unnamed buyer', buyerGstin: r.gstin,
+      type: r.type, typeLabel: typeLabels[r.type], placeOfSupply: r.placeOfSupply, hsn:'—',
+      items: [{ desc: r.saleTypeText ? `Imported — ${r.saleTypeText}` : `Imported from ${st.fileName}`, hsn:'', qty:1, rate:r.taxable, gstPct:r.rate }],
+      taxMode:'exclusive', currency:'INR', taxable:r.taxable, gst,
+      status:'filed', theme:(profile && profile.invoiceTheme) || 'trade',
+      ewbRequired: ewb.required, ewbThreshold: ewb.threshold, rcm:false,
+      importSource: st.fileName
+    };
+
+    if(r.duplicate && overwrite){
+      const existing = invoices.find(v=>String(v.inv||'').trim().toLowerCase()===r.invNo.trim().toLowerCase());
+      if(existing){ Object.assign(existing, payload, {id:existing.id}); updated++; affected.push(existing); }
+    } else {
+      const newInv = Object.assign({id:payload.inv}, payload);
+      invoices.push(newInv); created++; affected.push(newInv);
+    }
+  });
+
+  affected.forEach(inv=>ensureRevenueEntryForInvoice(inv, null));
+  await persistInvoices();
+  await persistRevenueEntries();
+  renderInvoiceTable();
+  drawBestCustomerChart();
+  closeSalesImportModal();
+  showToast(`Import complete — ${created} new invoice${created===1?'':'s'} added${updated?`, ${updated} updated`:''}${skipped?`, ${skipped} skipped`:''}.`);
+}
+
 /* ================= PRINT / SHARE PREVIEW ================= */
 function previewInvoice(id){
   const inv = invoices.find(v=>v.id===id);
@@ -4929,6 +5714,7 @@ function previewInvoice(id){
   const hasBank = !!(bank && (bank.holder || bank.bankName || bank.accountNumber));
   const grandTotal = inv.taxable + inv.gst;
   const payableTotal = inv.rcm ? inv.taxable : grandTotal;
+  const isFreePlan = getCurrentPlanKey()==='ledger';
 
   const items = (inv.items||[]).map(it=>({
     desc: it.desc||'—', hsn: it.hsn||'—', qty: it.qty, unit: it.unit||'PCS', rate: Number(it.rate),
@@ -4962,16 +5748,31 @@ function previewInvoice(id){
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,600;0,700;1,500&family=Source+Sans+3:wght@400;600;700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
       :root{
-        --primary:#20283B; --accent:#9C7A3C; --bg:#FFFCF5; --line:#DCD2AE; --watermark:rgba(32,40,59,0.05);
+        --primary:#20283B; --accent:#9C7A3C; --bg:#FFFCF5; --line:#DCD2AE; --watermark:rgba(32,40,59,0.11);
         --font:'Source Sans 3',sans-serif; --headfont:'Fraunces',serif;
       }
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;}
+      /* Chrome/Edge/Firefox strip background colors when printing or "Save as PDF" unless told
+         otherwise — without this, every themed header/table background in the invoice below
+         (which all use var(--primary)/var(--accent) as backgrounds) prints/exports as plain
+         white regardless of the on-screen preview. This forces exact colors on export. */
+      *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact; }
       body{font-family:var(--font); color:var(--primary); background:#DCE0E6; position:relative; min-height:100vh;}
-      .page{background:var(--bg); padding:48px 46px; max-width:800px; margin:32px auto; position:relative; box-shadow:0 8px 30px rgba(20,25,40,0.16); border-radius:2px; overflow:hidden;}
+      /* .page must establish its own stacking context (z-index:0 here does that) so the
+         watermark below is guaranteed to paint ABOVE .page's own opaque background and
+         BELOW .sheet's actual invoice content, regardless of DOM/paint-order quirks. */
+      .page{background:var(--bg); padding:48px 46px; max-width:800px; margin:32px auto; position:relative; z-index:0; box-shadow:0 8px 30px rgba(20,25,40,0.16); border-radius:2px; overflow:hidden;}
+      /* Previously position:fixed, anchored to the viewport — browsers commonly drop
+         position:fixed elements entirely when printing/exporting to PDF (fixed positioning
+         doesn't have a sensible meaning across paginated print output), which is why the
+         watermark never actually showed up on a downloaded invoice. Now it's positioned
+         relative to .page itself (an in-flow layer of the printed page), so it prints
+         reliably, and a higher alpha (still subtle, but no longer invisible) so it's
+         actually perceptible on screen and on paper. */
       .watermark{
-        position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-30deg);
-        font-family:var(--headfont); font-size:120px; font-weight:700; color:var(--watermark);
+        position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-30deg);
+        font-family:var(--headfont); font-size:40px; font-weight:700; letter-spacing:1px; color:var(--watermark);
         white-space:nowrap; pointer-events:none; z-index:0; user-select:none;
       }
       .sheet{position:relative; z-index:1;}
@@ -4990,18 +5791,19 @@ function previewInvoice(id){
       .sig-line{border-top:1px solid var(--primary);margin-bottom:6px;}
       .signatory .sig-label{font-size:12.5px;font-weight:600;color:var(--primary);}
       .signatory .sig-company{font-size:11.5px;color:var(--accent);margin-top:2px;}
-      @media print{ .toolbar{display:none;} .watermark{opacity:1;} body{background:#fff;} .page{box-shadow:none;margin:0 auto;} }
+      @media print{ .toolbar{display:none;} .upgrade-note{display:none;} body{background:#fff;} .page{box-shadow:none;margin:0 auto;} }
     </style>
     <style id="layoutStyle"></style>
     </head><body>
-      <div class="watermark">FingerTax</div>
       <div class="toolbar">
           <button class="btn-print" onclick="window.print()">🖶 Print</button>
           <button class="btn-wa" onclick="window.open('${waLink}','_blank')">Share via WhatsApp</button>
           <button class="btn-mail" onclick="window.location.href='${mailLink}'">Share via Gmail</button>
           <select class="theme-select" id="themePicker" onchange="applyTheme(this.value)"></select>
+          ${isFreePlan ? `<span class="upgrade-note" style="font-size:12px;color:#8A8578;font-family:'Inter',sans-serif;margin-left:4px;">Free plan — invoices carry a "FingerTax" watermark. <a href="#" onclick="goUpgradeFromInvoice();return false;" style="color:#9C7A3C;font-weight:600;">Upgrade to remove it →</a></span>` : ''}
       </div>
       <div class="page">
+        ${isFreePlan ? '<div class="watermark">FingerTax</div>' : ''}
         <div class="sheet" id="sheetRoot"></div>
       </div>
       <script>
@@ -5014,6 +5816,22 @@ function previewInvoice(id){
         var _fmtDate = function(d){ return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
         D.dateIssued = _fmtDate(_today);
         D.dateDue = _fmtDate(_due);
+
+        // Clicking "Upgrade to remove it" used to open the subscription modal on the *other*
+        // tab (the main app) while this invoice tab just sat there unchanged — easy to miss
+        // entirely if the person doesn't happen to notice the other tab. Closing this popup
+        // after handing off to the opener makes it a single, visible hop: click → this tab
+        // goes away → the main app tab (now showing the subscription modal) is what's left
+        // on screen, instead of two tabs quietly drifting out of sync.
+        function goUpgradeFromInvoice(){
+          if(window.opener && !window.opener.closed){
+            window.opener.focus();
+            if(typeof window.opener.openSubscriptionModal === 'function') window.opener.openSubscriptionModal();
+            window.close();
+          } else {
+            alert('Please go back to the FingerTax tab and open Profile → Subscription to upgrade.');
+          }
+        }
 
         function renderBank(wrapStyle){
           if(!D.bank) return '';
@@ -5277,13 +6095,20 @@ function previewInvoice(id){
         /* ============ LAYOUT: GEOMETRIC (Modern Geometric — Color Block) ============ */
         function layoutGeometric(){
           document.getElementById('layoutStyle').textContent = \`
+            /* .g-corner/.g-corner2 are a purely decorative corner flourish — they must never
+               have text placed over them. Previously they were 150-220px TALL while the header
+               itself was only 130px tall, so the ribbon both overhung into the section below
+               AND sat directly under the right-aligned invoice-number text (.g-invbox), making
+               that text unreadable against the ribbon's colors. Shrinking the ribbon's height
+               and giving .g-invbox a matching top margin keeps them from ever overlapping,
+               regardless of how long the invoice number or dates are. */
             .g-top{position:relative;min-height:130px;margin-bottom:6px;}
-            .g-corner{position:absolute;top:0;right:0;width:220px;height:150px;background:var(--accent);clip-path:polygon(100% 0, 100% 100%, 0 0);}
-            .g-corner2{position:absolute;top:0;right:0;width:130px;height:88px;background:var(--primary);clip-path:polygon(100% 0, 100% 100%, 0 0);opacity:0.92;}
+            .g-corner{position:absolute;top:0;right:0;width:150px;height:64px;background:var(--accent);clip-path:polygon(100% 0, 100% 100%, 0 0);}
+            .g-corner2{position:absolute;top:0;right:0;width:90px;height:38px;background:var(--primary);clip-path:polygon(100% 0, 100% 100%, 0 0);opacity:0.92;}
             .g-head-row{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-start;padding-top:4px;}
             .g-title{font-size:32px;font-weight:800;letter-spacing:-0.5px;color:var(--primary);}
             .g-bizmeta{font-size:12px;color:#70788a;margin-top:8px;line-height:1.6;max-width:260px;}
-            .g-invbox{text-align:right;font-size:12px;color:#70788a;margin-top:6px;line-height:1.7;}
+            .g-invbox{text-align:right;font-size:12px;color:#70788a;margin-top:76px;line-height:1.7;}
             .g-invbox b{color:var(--primary);font-size:14px;}
             .g-parties{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:26px 0 22px 0;}
             .g-parties .lbl{font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:6px;}
@@ -5958,17 +6783,63 @@ async function loadCustomers(){
     if(res && res.value) customers = JSON.parse(res.value);
   }catch(e){ customers = []; }
   renderPartywiseReport();
+  renderCustomersPanel();
 }
 async function persistCustomers(){
   try{ await AppStorage.set('fingertax_customers', JSON.stringify(customers)); }catch(e){}
+}
+
+// Dedicated master-data view: just the customer profiles themselves (trade name, GSTIN, PAN,
+// address, contact) — separate from the Customer wise Report, which is a sales-metrics view
+// (invoice counts, taxable value, credit notes) built from these same records plus invoice data.
+function renderCustomersPanel(){
+  const table = document.getElementById('customersTable');
+  if(!table) return;
+  const searchEl = document.getElementById('custSearchBox');
+  const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
+  const header = `<tr><th>Trade Name</th><th>GSTIN</th><th>PAN</th><th>Phone</th><th>Email</th><th>City</th><th style="width:130px;">Actions</th></tr>`;
+  if(!customers.length){
+    table.innerHTML = header + `<tr><td colspan="7" style="text-align:center;color:var(--grey);padding:18px;">No customers saved yet — click "+ Add Customer" to create your first customer profile.</td></tr>`;
+    return;
+  }
+  const rows = customers.filter(c=>{
+    if(!q) return true;
+    return (c.name||'').toLowerCase().includes(q) ||
+      (c.gstin||'').toLowerCase().includes(q) ||
+      (c.pan||'').toLowerCase().includes(q) ||
+      (c.phone||'').toLowerCase().includes(q) ||
+      (c.email||'').toLowerCase().includes(q) ||
+      ((c.address&&c.address.city)||'').toLowerCase().includes(q);
+  }).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  if(!rows.length){
+    table.innerHTML = header + `<tr><td colspan="7" style="text-align:center;color:var(--grey);padding:18px;">No customers match "${q}".</td></tr>`;
+    return;
+  }
+  table.innerHTML = header + rows.map(c=>{
+    const addrParts = [(c.address&&c.address.line1)||'', (c.address&&c.address.city)||'', (c.address&&c.address.pincode)||''].filter(Boolean);
+    const addrTitle = addrParts.length ? ` title="${addrParts.join(', ').replace(/"/g,'&quot;')}"` : '';
+    return `<tr>
+      <td${addrTitle}>${c.name}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">${c.gstin||'—'}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">${c.pan||'—'}</td>
+      <td>${c.phone||'—'}</td>
+      <td>${c.email||'—'}</td>
+      <td>${(c.address&&c.address.city)||'—'}</td>
+      <td>
+        <button class="btn ghost sm" onclick="openEditCustomer('${c.id}')">✎ Edit</button>
+        <button class="btn ghost sm" style="color:var(--oxblood);border-color:var(--oxblood);" onclick="deleteCustomer('${c.id}')">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 function openAddCustomer(){
   window._editingCustomerId = null;
   document.getElementById('customerModalTitle').textContent = 'Add New Customer';
   document.getElementById('custSaveBtn').textContent = 'Save customer';
-  ['custName','custEmail','custGstin','custState','custPhone','custAddress1','custCity','custPincode','custNotes'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  ['custName','custEmail','custGstin','custState','custPan','custPhone','custAddress1','custCity','custPincode','custNotes'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('custGstinNote').textContent='';
+  document.getElementById('custPanNote').textContent='';
   document.getElementById('custSaveNote').textContent='';
   document.getElementById('customerBackdrop').classList.add('show');
 }
@@ -5982,12 +6853,14 @@ function openEditCustomer(id){
   document.getElementById('custEmail').value = c.email||'';
   document.getElementById('custGstin').value = c.gstin||'';
   document.getElementById('custState').value = c.gstin ? (stateFromGstin(c.gstin)||'') : '';
+  document.getElementById('custPan').value = c.pan||'';
   document.getElementById('custPhone').value = c.phone||'';
   document.getElementById('custAddress1').value = (c.address&&c.address.line1)||'';
   document.getElementById('custCity').value = (c.address&&c.address.city)||'';
   document.getElementById('custPincode').value = (c.address&&c.address.pincode)||'';
   document.getElementById('custNotes').value = c.notes||'';
   document.getElementById('custGstinNote').textContent='';
+  document.getElementById('custPanNote').textContent='';
   document.getElementById('custSaveNote').textContent='';
   document.getElementById('customerBackdrop').classList.add('show');
 }
@@ -6008,6 +6881,14 @@ function onCustGstinInput(){
         if(isValidGstinFormat(gstin) && isValidGstinChecksum(gstin)){
           note.textContent = `✓ Valid GSTIN — state auto-detected as ${state}.`;
           note.style.color = 'var(--sage)';
+          // PAN is literally embedded in a GSTIN (characters 3–12), so once the GSTIN checks out,
+          // fill PAN in automatically rather than making the person type it again — but only if
+          // they haven't already typed a PAN of their own, so this never overwrites their entry.
+          const panField = document.getElementById('custPan');
+          if(panField && !panField.value.trim()){
+            panField.value = gstin.slice(2,12);
+            onCustPanInput();
+          }
         } else if(isValidGstinFormat(gstin)){
           note.textContent = `Format looks right, but the check digit doesn't match — likely a typo.`;
           note.style.color = 'var(--oxblood)';
@@ -6028,6 +6909,18 @@ function onCustGstinInput(){
     stateField.value = '';
     note.textContent = '';
   }
+}
+// PAN-format validator (5 letters, 4 digits, 1 letter — e.g. AAFCB9951P).
+const PAN_FORMAT = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+function onCustPanInput(){
+  const input = document.getElementById('custPan');
+  const pan = input.value.toUpperCase().replace(/[^0-9A-Z]/g,'').slice(0,10);
+  input.value = pan;
+  const note = document.getElementById('custPanNote');
+  if(!pan){ note.textContent=''; return; }
+  if(pan.length<10){ note.textContent = `(${pan.length}/10 characters)`; note.style.color='var(--grey)'; return; }
+  if(PAN_FORMAT.test(pan)){ note.textContent = '✓ Valid PAN format.'; note.style.color='var(--sage)'; }
+  else { note.textContent = "Doesn't match the standard PAN format (5 letters, 4 digits, 1 letter)."; note.style.color='var(--oxblood)'; }
 }
 function onCustPincodeInput(){
   const pinEl = document.getElementById('custPincode');
@@ -6059,9 +6952,16 @@ async function saveNewCustomer(){
     document.getElementById('custGstin').focus();
     return;
   }
+  const pan = document.getElementById('custPan').value.trim().toUpperCase();
+  if(pan && !PAN_FORMAT.test(pan)){
+    note.textContent = 'This PAN doesn\'t look valid — fix it, or leave blank.';
+    note.style.color = 'var(--oxblood)';
+    document.getElementById('custPan').focus();
+    return;
+  }
   const data = {
     name, email: document.getElementById('custEmail').value.trim(),
-    gstin, phone: document.getElementById('custPhone').value.trim(),
+    gstin, pan, phone: document.getElementById('custPhone').value.trim(),
     address: {
       line1: document.getElementById('custAddress1').value.trim(),
       city: document.getElementById('custCity').value.trim(),
@@ -6081,6 +6981,7 @@ async function saveNewCustomer(){
   await persistCustomers();
   closeCustomerModal();
   renderPartywiseReport();
+  renderCustomersPanel();
   showToast(isEdit ? 'Customer updated.' : `${name} added as a new customer.`);
 }
 
@@ -6092,6 +6993,7 @@ function deleteCustomer(id){
   customers = customers.filter(x=>x.id!==id);
   persistCustomers();
   renderPartywiseReport();
+  renderCustomersPanel();
   showToast(`${c.name} removed from customer list.`);
 }
 
@@ -9070,8 +9972,22 @@ if(document.readyState === 'loading'){
   // Returns the current user's Firebase ID token, or null if nobody is signed in
   // with Google. AppStorage sends this as a Bearer token to the data-save/data-load
   // Netlify Functions, which verify it server-side before touching Supabase.
+  //
+  // _fbAuthReady only resolves once onAuthStateChanged has fired — which normally happens
+  // within milliseconds, but never fires at all if Firebase Auth's persistence layer can't
+  // initialise (e.g. third-party storage blocked inside a sandboxed preview iframe, no
+  // network reachability, or a file:// origin). Every save/load in the app calls this
+  // function, so without a timeout a single stuck promise would silently freeze the entire
+  // app — "Continue to my ledger" would just never respond, with no error shown anywhere.
+  // Falling back to "not signed in" after 2.5s keeps local-only saving working regardless.
   window.fbGetIdToken = async function(){
-    const user = auth.currentUser || await window._fbAuthReady;
+    let user = auth.currentUser;
+    if(!user){
+      user = await Promise.race([
+        window._fbAuthReady,
+        new Promise(resolve => setTimeout(()=>resolve(null), 2500))
+      ]);
+    }
     if(!user) return null;
     try{ return await user.getIdToken(); }catch(e){ return null; }
   };
